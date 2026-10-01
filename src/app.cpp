@@ -99,7 +99,7 @@ bool App::Initialize(bool startHidden) {
         MessageBoxW(nullptr, L"Direct2D initialization failed.", L"Claude Pets", MB_ICONERROR);
         return false;
     }
-    overlay_.SetDarkTheme(SystemUsesDarkTheme());
+    ApplyTheme();
     overlay_.SetMascotWidth(settings_.mascotWidth);
     overlay_.SetActivityVisible(settings_.showActivity);
     overlay_.SetLookAtCursor(settings_.lookAtCursor);
@@ -159,7 +159,9 @@ void App::ApplyLanguage() {
 }
 
 void App::ApplyTheme() {
-    overlay_.SetDarkTheme(SystemUsesDarkTheme());
+    const bool dark = settings_.theme == L"dark" || (settings_.theme != L"light" && SystemUsesDarkTheme());
+    ApplyMenuTheme(dark);
+    overlay_.SetDarkTheme(dark);
 }
 
 void App::RegisterToggleHotkey() {

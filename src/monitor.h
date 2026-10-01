@@ -41,6 +41,7 @@ private:
     };
 
     struct Tracked {
+        std::string cliSessionId;
         std::wstring transcriptPath;
         int64_t nextResolveMs = 0;
         int64_t nextStatMs = 0;

@@ -20,6 +20,7 @@ add_executable(claude-pets WIN32
     src/hooks.cpp
     src/i18n.cpp
     src/json.cpp
+    src/log.cpp
     src/main.cpp
     src/monitor.cpp
     src/notices.cpp

@@ -99,7 +99,7 @@ bool Renderer::CreateTarget() {
     brush_.Reset();
     sheetBitmap_.Reset();
     const D2D1_RENDER_TARGET_PROPERTIES properties = D2D1::RenderTargetProperties(
-        D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96.0f, 96.0f);
+        D2D1_RENDER_TARGET_TYPE_SOFTWARE, D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96.0f, 96.0f);
     if (FAILED(d2dFactory_->CreateDCRenderTarget(&properties, &target_))) {
         return false;
     }
@@ -182,12 +182,15 @@ bool Renderer::LoadSpritesheet(const std::wstring& path, int declaredVersion, st
         return false;
     }
     sheetSource_ = cached;
+    sheetPath_ = path;
+    sheetVersion_ = declaredVersion;
     return true;
 }
 
 void Renderer::UnloadSpritesheet() {
     sheetSource_.Reset();
     sheetBitmap_.Reset();
+    sheetPath_.clear();
     spriteRows_ = kSpriteRowsV1;
 }
 
@@ -195,10 +198,21 @@ bool Renderer::UploadSprite() {
     if (sheetBitmap_ != nullptr) {
         return true;
     }
-    if (sheetSource_ == nullptr || target_ == nullptr) {
+    if (target_ == nullptr) {
         return false;
     }
-    return SUCCEEDED(target_->CreateBitmapFromWicBitmap(sheetSource_.Get(), nullptr, &sheetBitmap_));
+    if (sheetSource_ == nullptr && !sheetPath_.empty()) {
+        std::wstring error;
+        const std::wstring path = sheetPath_;
+        if (!LoadSpritesheet(path, sheetVersion_, error)) {
+            return false;
+        }
+    }
+    if (sheetSource_ == nullptr || FAILED(target_->CreateBitmapFromWicBitmap(sheetSource_.Get(), nullptr, &sheetBitmap_))) {
+        return false;
+    }
+    sheetSource_.Reset();
+    return true;
 }
 
 bool Renderer::BeginFrame(int widthPx, int heightPx, float scale, const RECT* partial) {

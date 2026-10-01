@@ -63,7 +63,9 @@ std::string Age(int64_t now, int64_t timestamp) {
     return std::to_string(seconds / 3600) + "h";
 }
 
-void Write(const std::string& text) {
+}
+
+void WriteConsoleText(const std::string& text) {
     HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE);
     if (output == nullptr || output == INVALID_HANDLE_VALUE) {
         if (AttachConsole(ATTACH_PARENT_PROCESS)) {
@@ -75,8 +77,6 @@ void Write(const std::string& text) {
     }
     DWORD written = 0;
     WriteFile(output, text.data(), static_cast<DWORD>(text.size()), &written, nullptr);
-}
-
 }
 
 int RunDiagnostics() {
@@ -136,7 +136,7 @@ int RunDiagnostics() {
     for (const Notice& notice : notices) {
         out += "  [" + std::string(StatusName(notice.status)) + "] " + Narrow(notice.title) + " - " + Narrow(notice.subtitle) + "  (" + notice.id + ")\n";
     }
-    Write(out);
+    WriteConsoleText(out);
     return 0;
 }
 

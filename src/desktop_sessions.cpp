@@ -5,6 +5,7 @@
 
 #include <shlobj.h>
 
+#include <mutex>
 #include <set>
 #include <unordered_map>
 
@@ -49,6 +50,16 @@ bool ParseSession(const std::string& text, DesktopSession& session) {
 }
 
 std::vector<std::wstring> DesktopSessionRoots() {
+    static std::mutex cacheLock;
+    static std::vector<std::wstring> cached;
+    static int64_t cachedAtMs = 0;
+    const int64_t now = UnixNowMs();
+    {
+        std::lock_guard<std::mutex> lock(cacheLock);
+        if (cachedAtMs != 0 && now - cachedAtMs < 60000) {
+            return cached;
+        }
+    }
     std::vector<std::wstring> roots;
     const std::wstring direct = JoinPath(JoinPath(KnownFolderPath(FOLDERID_RoamingAppData), L"Claude"), L"claude-code-sessions");
     if (DirectoryExists(direct)) {
@@ -64,6 +75,9 @@ std::vector<std::wstring> DesktopSessionRoots() {
             roots.push_back(candidate);
         }
     }
+    std::lock_guard<std::mutex> lock(cacheLock);
+    cached = roots;
+    cachedAtMs = now;
     return roots;
 }
 

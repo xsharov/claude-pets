@@ -57,6 +57,23 @@ bool SystemUsesDarkTheme() {
     return value == 0;
 }
 
+void ApplyMenuTheme(bool dark) {
+    using SetPreferredAppMode = int(WINAPI*)(int);
+    using FlushMenuThemes = void(WINAPI*)();
+    static const HMODULE uxtheme = LoadLibraryExW(L"uxtheme.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (uxtheme == nullptr) {
+        return;
+    }
+    const auto setMode = reinterpret_cast<SetPreferredAppMode>(reinterpret_cast<void*>(GetProcAddress(uxtheme, MAKEINTRESOURCEA(135))));
+    const auto flush = reinterpret_cast<FlushMenuThemes>(reinterpret_cast<void*>(GetProcAddress(uxtheme, MAKEINTRESOURCEA(136))));
+    if (setMode != nullptr) {
+        setMode(dark ? 2 : 3);
+    }
+    if (flush != nullptr) {
+        flush();
+    }
+}
+
 bool ParseHotkey(const std::wstring& text, UINT& modifiers, UINT& virtualKey) {
     modifiers = 0;
     virtualKey = 0;

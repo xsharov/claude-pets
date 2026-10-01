@@ -190,8 +190,33 @@ void Overlay::Hide() {
     ShowWindow(window_, SW_HIDE);
 }
 
+void Overlay::PreserveOrderWhileHovered(std::vector<Notice>& notices) const {
+    const bool trayHovered = hover_.part == HitPart::Pill || hover_.part == HitPart::Peek || hover_.part == HitPart::Dismiss || hover_.part == HitPart::Badge;
+    if (!expanded_ && !trayHovered) {
+        return;
+    }
+    std::vector<Notice> ordered;
+    ordered.reserve(notices.size());
+    for (const Notice& previous : notices_) {
+        for (Notice& notice : notices) {
+            if (!notice.id.empty() && notice.id == previous.id) {
+                ordered.push_back(std::move(notice));
+                notice.id.clear();
+                break;
+            }
+        }
+    }
+    for (Notice& notice : notices) {
+        if (!notice.id.empty()) {
+            ordered.push_back(std::move(notice));
+        }
+    }
+    notices = std::move(ordered);
+}
+
 void Overlay::SetNotices(std::vector<Notice> notices, PetAnim mascotAnim) {
     const int64_t now = Ticks();
+    PreserveOrderWhileHovered(notices);
     const bool listChanged = notices != notices_;
     notices_ = std::move(notices);
     if (VisibleNoticeCount() <= 1) {

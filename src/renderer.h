@@ -55,7 +55,7 @@ public:
 
     bool LoadSpritesheet(const std::wstring& path, int declaredVersion, std::wstring& error);
     void UnloadSpritesheet();
-    bool HasSprite() const { return sheetSource_ != nullptr; }
+    bool HasSprite() const { return sheetSource_ != nullptr || sheetBitmap_ != nullptr; }
     int SpriteRows() const { return spriteRows_; }
 
     bool BeginFrame(int widthPx, int heightPx, float scale, const RECT* partial);
@@ -123,6 +123,8 @@ private:
     bool partial_ = false;
     RECT partialRect_ = {};
     int spriteRows_ = kSpriteRowsV1;
+    int sheetVersion_ = 1;
+    std::wstring sheetPath_;
     float cellWidth_ = 192.0f;
     float cellHeight_ = 208.0f;
 };

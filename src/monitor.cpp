@@ -2,6 +2,7 @@
 
 #include "claude_app.h"
 #include "json.h"
+#include "log.h"
 #include "util.h"
 
 #include <algorithm>
@@ -151,6 +152,9 @@ void SessionMonitor::ApplyHook(const std::string& payload, int64_t now) {
     const std::string& name = event["hook_event_name"].str();
     if (cliSessionId.empty() || name.empty()) {
         return;
+    }
+    if (LogEnabled()) {
+        LogLine("hook " + name + " session=" + cliSessionId + " tool=" + event["tool_name"].str());
     }
     HookState& hook = hooks_[cliSessionId];
     const std::string& transcriptPath = event["transcript_path"].str();
@@ -326,7 +330,7 @@ SessionView SessionMonitor::BuildView(const DesktopSession& session, Tracked& tr
     case TurnPhase::Running:
         view.status = SessionStatus::Running;
         view.activity = activity;
-        view.updatedAtMs = transcript.turnStartedMs > 0 ? transcript.turnStartedMs : std::max(session.latestUserFrameAt, phaseMs);
+        view.updatedAtMs = session.latestUserFrameAt > 0 ? session.latestUserFrameAt : (transcript.turnStartedMs > 0 ? transcript.turnStartedMs : phaseMs);
         break;
     case TurnPhase::Waiting:
         view.status = SessionStatus::Waiting;
@@ -367,6 +371,12 @@ SessionView SessionMonitor::BuildView(const DesktopSession& session, Tracked& tr
     default:
         view.status = SessionStatus::Idle;
         break;
+    }
+    if (LogEnabled() && (!tracked.seen || tracked.lastStatus != view.status)) {
+        LogLine("status " + session.sessionId + " " + std::to_string(static_cast<int>(tracked.lastStatus)) + "->" + std::to_string(static_cast<int>(view.status)) +
+                " transcript=" + std::to_string(static_cast<int>(transcript.phase)) + "@" + std::to_string(transcript.lastEntryMs) +
+                " hook=" + (hook != nullptr ? std::to_string(static_cast<int>(hook->phase)) + "@" + std::to_string(hook->atMs) : std::string("none")) +
+                " now=" + std::to_string(now));
     }
     tracked.lastStatus = view.status;
     tracked.seen = true;
@@ -430,6 +440,12 @@ void SessionMonitor::Cycle(int64_t now) {
             continue;
         }
         Tracked& tracked = tracked_[session.sessionId];
+        if (tracked.cliSessionId != session.cliSessionId) {
+            const std::string readTurnKey = tracked.readTurnKey;
+            tracked = Tracked{};
+            tracked.cliSessionId = session.cliSessionId;
+            tracked.readTurnKey = readTurnKey;
+        }
         tracked.alive = true;
         const bool hot = tracked.lastStatus == SessionStatus::Running || tracked.lastStatus == SessionStatus::Waiting ||
                          now - session.lastActivityAt < kHotWindowMs || (hook != nullptr && now - hook->atMs < kHotWindowMs);

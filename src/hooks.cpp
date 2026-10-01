@@ -31,14 +31,23 @@ bool IsOurHook(const Json& hook) {
     return hook["command"].str().find(kArgument) != std::string::npos;
 }
 
-bool LoadClaudeSettings(Json& root, bool& existed) {
+struct SettingsFile {
+    Json root;
+    bool existed = false;
+    bool trailingNewline = true;
+    bool crlf = false;
+};
+
+bool LoadClaudeSettings(SettingsFile& file) {
     std::string text;
-    existed = ReadWholeFile(ClaudeSettingsPath(), text, size_t{16} << 20);
-    if (!existed || text.find_first_not_of(" \t\r\n") == std::string::npos) {
-        root = Json::MakeObject();
+    file.existed = ReadWholeFile(ClaudeSettingsPath(), text, size_t{16} << 20);
+    if (!file.existed || text.find_first_not_of(" \t\r\n") == std::string::npos) {
+        file.root = Json::MakeObject();
         return true;
     }
-    return ParseJson(text, root) && root.isObject();
+    file.trailingNewline = text.back() == '\n';
+    file.crlf = text.find("\r\n") != std::string::npos;
+    return ParseJson(text, file.root) && file.root.isObject();
 }
 
 Json MakeHookGroup(const std::string& executable, bool toolEvent) {
@@ -103,13 +112,28 @@ bool RemoveOurHooks(Json& root) {
     return removedAny;
 }
 
-bool SaveClaudeSettings(const Json& root) {
+bool SaveClaudeSettings(const SettingsFile& file) {
     const std::wstring path = ClaudeSettingsPath();
     const size_t slash = path.find_last_of(L"\\/");
     if (slash != std::wstring::npos && !EnsureDirectory(path.substr(0, slash))) {
         return false;
     }
-    return WriteFileAtomically(path, SerializeJson(root, true));
+    std::string text = SerializeJson(file.root, true);
+    if (!file.trailingNewline && !text.empty() && text.back() == '\n') {
+        text.pop_back();
+    }
+    if (file.crlf) {
+        std::string converted;
+        converted.reserve(text.size() + text.size() / 16);
+        for (const char c : text) {
+            if (c == '\n') {
+                converted.push_back('\r');
+            }
+            converted.push_back(c);
+        }
+        text.swap(converted);
+    }
+    return WriteFileAtomically(path, text);
 }
 
 void CopyString(const Json& source, Json& target, const char* key, size_t limit) {
@@ -157,12 +181,11 @@ std::wstring ClaudeSettingsPath() {
 }
 
 HookState QueryHookState(const std::wstring& executable) {
-    Json root;
-    bool existed = false;
-    if (!LoadClaudeSettings(root, existed)) {
+    SettingsFile file;
+    if (!LoadClaudeSettings(file)) {
         return HookState::Unreadable;
     }
-    const Json& hooks = root["hooks"];
+    const Json& hooks = file.root["hooks"];
     const std::wstring expected = ToLower(executable);
     int found = 0;
     int current = 0;
@@ -188,12 +211,12 @@ HookState QueryHookState(const std::wstring& executable) {
 }
 
 bool InstallHooks(const std::wstring& executable) {
-    Json root;
-    bool existed = false;
-    if (!LoadClaudeSettings(root, existed)) {
+    SettingsFile file;
+    if (!LoadClaudeSettings(file)) {
         return false;
     }
-    if (existed) {
+    Json& root = file.root;
+    if (file.existed) {
         const std::wstring backup = ClaudeSettingsPath() + L".claude-pets.bak";
         if (!FileExists(backup)) {
             CopyFileW(ClaudeSettingsPath().c_str(), backup.c_str(), TRUE);
@@ -214,19 +237,18 @@ bool InstallHooks(const std::wstring& executable) {
         }
         groups->push(MakeHookGroup(command, IsToolEvent(event)));
     }
-    return SaveClaudeSettings(root);
+    return SaveClaudeSettings(file);
 }
 
 bool UninstallHooks() {
-    Json root;
-    bool existed = false;
-    if (!LoadClaudeSettings(root, existed)) {
+    SettingsFile file;
+    if (!LoadClaudeSettings(file)) {
         return false;
     }
-    if (!existed || !RemoveOurHooks(root)) {
+    if (!file.existed || !RemoveOurHooks(file.root)) {
         return true;
     }
-    return SaveClaudeSettings(root);
+    return SaveClaudeSettings(file);
 }
 
 int RunHookRelay() {

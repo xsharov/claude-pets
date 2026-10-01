@@ -1,6 +1,7 @@
 #include "app.h"
 #include "diagnostics.h"
 #include "hooks.h"
+#include "util.h"
 
 #include <objbase.h>
 #include <windows.h>
@@ -11,6 +12,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     const wchar_t* commandLine = GetCommandLineW();
     if (std::wcsstr(commandLine, cp::kHookArgument) != nullptr) {
         return cp::RunHookRelay();
+    }
+    if (std::wcsstr(commandLine, L"--install-hooks") != nullptr || std::wcsstr(commandLine, L"--uninstall-hooks") != nullptr) {
+        const bool install = std::wcsstr(commandLine, L"--install-hooks") != nullptr;
+        const bool ok = install ? cp::InstallHooks(cp::ExecutablePath()) : cp::UninstallHooks();
+        cp::WriteConsoleText(std::string(ok ? "ok: " : "failed: ") + cp::Narrow(cp::ClaudeSettingsPath()) + "\n");
+        return ok ? 0 : 1;
     }
     if (std::wcsstr(commandLine, L"--diagnose") != nullptr) {
         const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);

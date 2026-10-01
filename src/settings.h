@@ -21,6 +21,7 @@ struct Settings {
     bool showActivity = true;
     bool lookAtCursor = true;
     std::wstring language = L"auto";
+    std::wstring theme = L"auto";
     std::wstring hotkey = L"Ctrl+Alt+P";
     std::wstring lastMonitorKey;
     int64_t lastAliveMs = 0;

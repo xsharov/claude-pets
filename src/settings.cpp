@@ -36,6 +36,9 @@ Settings LoadSettings() {
     if (root["language"].isString()) {
         settings.language = Widen(root["language"].str());
     }
+    if (root["theme"].isString()) {
+        settings.theme = Widen(root["theme"].str());
+    }
     if (root["hotkey"].isString()) {
         settings.hotkey = Widen(root["hotkey"].str());
     }
@@ -69,6 +72,7 @@ bool SaveSettings(const Settings& settings) {
     root.set("showActivity", Json::MakeBool(settings.showActivity));
     root.set("lookAtCursor", Json::MakeBool(settings.lookAtCursor));
     root.set("language", Json::MakeString(Narrow(settings.language)));
+    root.set("theme", Json::MakeString(Narrow(settings.theme)));
     root.set("hotkey", Json::MakeString(Narrow(settings.hotkey)));
     root.set("lastMonitor", Json::MakeString(Narrow(settings.lastMonitorKey)));
     root.set("lastAlive", Json::MakeInteger(settings.lastAliveMs));

@@ -90,6 +90,7 @@ private:
     void ApplyLayout(bool forceRender);
     void UpdatePillTargets();
     void SyncPills();
+    void PreserveOrderWhileHovered(std::vector<Notice>& notices) const;
     bool StepAnimations(int64_t now);
     float MascotHeightDip() const;
     int VisibleNoticeCount() const;
