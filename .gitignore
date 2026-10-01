@@ -10,3 +10,12 @@
 *.opensdf
 *.suo
 CMakeUserPresets.json
+CMakeSettings.json
+compile_commands.json
+__pycache__/
+*.pyc
+*.zip
+*.log
+Thumbs.db
+desktop.ini
+.DS_Store
