@@ -2,6 +2,7 @@
 #include "diagnostics.h"
 #include "hooks.h"
 #include "util.h"
+#include "version.h"
 
 #include <objbase.h>
 #include <windows.h>
@@ -12,6 +13,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     const wchar_t* commandLine = GetCommandLineW();
     if (std::wcsstr(commandLine, cp::kHookArgument) != nullptr) {
         return cp::RunHookRelay();
+    }
+    if (std::wcsstr(commandLine, L"--version") != nullptr) {
+        cp::WriteConsoleText(std::string("claude-pets ") + CP_VERSION_TEXT + "\n");
+        return 0;
     }
     if (std::wcsstr(commandLine, L"--install-hooks") != nullptr || std::wcsstr(commandLine, L"--uninstall-hooks") != nullptr) {
         const bool install = std::wcsstr(commandLine, L"--install-hooks") != nullptr;

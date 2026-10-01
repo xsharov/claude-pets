@@ -10,6 +10,7 @@
 #include "settings.h"
 #include "transcript.h"
 #include "util.h"
+#include "version.h"
 
 #include <algorithm>
 
@@ -82,7 +83,7 @@ void WriteConsoleText(const std::string& text) {
 int RunDiagnostics() {
     const int64_t now = UnixNowMs();
     std::string out;
-    out += "claude-pets diagnostics\n";
+    out += std::string("claude-pets ") + CP_VERSION_TEXT + " diagnostics\n";
     out += "claude desktop running: " + std::string(IsClaudeDesktopRunning() ? "yes" : "no") + "\n";
     const HookState hooks = QueryHookState(ExecutablePath());
     out += "hooks: " + std::string(hooks == HookState::Installed ? "installed" : hooks == HookState::Outdated ? "outdated" : hooks == HookState::Unreadable ? "unreadable" : "not installed") + "\n";

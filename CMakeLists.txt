@@ -1,6 +1,30 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(ClaudePets VERSION 0.1.0 LANGUAGES CXX RC)
+project(ClaudePets LANGUAGES CXX RC)
+
+set(CLAUDE_PETS_VERSION "" CACHE STRING "Version embedded into claude-pets.exe as major.minor.patch; empty takes the latest v* git tag")
+set(PETS_VERSION "${CLAUDE_PETS_VERSION}")
+if(PETS_VERSION STREQUAL "")
+    find_package(Git QUIET)
+    if(Git_FOUND)
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" describe --tags --abbrev=0 --match "v[0-9]*"
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+            OUTPUT_VARIABLE PETS_VERSION
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET)
+        string(REGEX REPLACE "^v" "" PETS_VERSION "${PETS_VERSION}")
+    endif()
+endif()
+if(NOT PETS_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+    set(PETS_VERSION "0.0.0")
+endif()
+string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)$" PETS_VERSION_MATCH "${PETS_VERSION}")
+set(PETS_VERSION_MAJOR "${CMAKE_MATCH_1}")
+set(PETS_VERSION_MINOR "${CMAKE_MATCH_2}")
+set(PETS_VERSION_PATCH "${CMAKE_MATCH_3}")
+configure_file(res/version.h.in "${CMAKE_CURRENT_BINARY_DIR}/generated/version.h" @ONLY)
+message(STATUS "claude-pets version ${PETS_VERSION}")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -38,7 +62,7 @@ add_executable(claude-pets WIN32
     res/app.rc
 )
 
-target_include_directories(claude-pets PRIVATE src res)
+target_include_directories(claude-pets PRIVATE src res "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 target_compile_definitions(claude-pets PRIVATE
     UNICODE
