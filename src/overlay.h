@@ -1,6 +1,7 @@
 #pragma once
 
 #include "animation.h"
+#include "frame_clock.h"
 #include "notices.h"
 #include "renderer.h"
 #include "settings.h"
@@ -53,6 +54,7 @@ public:
 
 private:
     enum class HitPart : uint8_t { None, Mascot, Badge, Pill, Peek, Dismiss };
+    enum class LayoutChange : uint8_t { None, Moved, Geometry };
 
     struct Hit {
         HitPart part = HitPart::None;
@@ -60,7 +62,15 @@ private:
         bool operator==(const Hit&) const = default;
     };
 
+    struct LagRange {
+        float minX = 0.0f;
+        float maxX = 0.0f;
+        float minY = 0.0f;
+        float maxY = 0.0f;
+    };
+
     struct Layout {
+        HMONITOR monitor = nullptr;
         float scale = 1.0f;
         RECT work = {};
         RECT window = {};
@@ -87,11 +97,11 @@ private:
     LRESULT HandleMessage(UINT message, WPARAM wParam, LPARAM lParam);
 
     Layout ComputeLayout() const;
+    LayoutChange Relayout();
     void ApplyLayout(bool forceRender);
     void UpdatePillTargets();
     void SyncPills();
     void PreserveOrderWhileHovered(std::vector<Notice>& notices) const;
-    bool StepAnimations(int64_t now);
     float MascotHeightDip() const;
     int VisibleNoticeCount() const;
     int ExpandedCapacity() const;
@@ -100,7 +110,15 @@ private:
 
     void Render(bool full);
     void ScheduleTimer();
-    void OnTimer(int64_t now);
+    void Advance(double now);
+    void RecordFrame(double now, double renderMs);
+    bool Animating() const;
+    bool StepAnimations(double now, bool& relayout);
+    bool PillsVisible() const;
+    D2D1_RECT_F PillRect(const PillState& pill) const;
+    LagRange LagLimits() const;
+    void ShiftLag(float dx, float dy);
+    SpriteFrame CurrentFrame() const;
     PetAnim EffectiveAnim() const;
     void RefreshAnim(int64_t now);
     void UpdateLook(int64_t now);
@@ -124,10 +142,12 @@ private:
     bool OnSetCursor();
     void UpdateHover(const Hit& hit);
     void PollHover();
-    void MoveAnchor(POINT anchor);
+    LayoutChange MoveAnchor(POINT anchor);
     POINT ClampAnchor(POINT anchor, const RECT& work, float scale) const;
+    POINT DragAnchor(POINT cursor) const;
+    LayoutChange StepDrag(int64_t now);
     void StartSnap(POINT cursor);
-    bool StepSnap(int64_t now);
+    LayoutChange StepSnap(double now);
     void PersistPosition();
     void ActivateBadge();
 
@@ -135,6 +155,7 @@ private:
     HINSTANCE instance_ = nullptr;
     OverlayCallbacks callbacks_;
     Renderer renderer_;
+    FrameClock frameClock_;
     Layout layout_;
     bool layoutValid_ = false;
     bool frameValid_ = false;
@@ -158,7 +179,8 @@ private:
     int64_t nextLookPollMs_ = 0;
     int64_t shimmerEpochMs_ = 0;
     int64_t lastShimmerMs_ = 0;
-    int64_t lastAnimationMs_ = 0;
+    double lastAnimationMs_ = 0.0;
+    D2D1_POINT_2F lag_ = {};
 
     Hit hover_;
     bool hoverMascot_ = false;
@@ -179,8 +201,8 @@ private:
     float snapVx_ = 0.0f;
     float snapVy_ = 0.0f;
     POINT snapTarget_ = {};
-    int64_t snapStartMs_ = 0;
-    int64_t snapLastMs_ = 0;
+    double snapStartMs_ = 0.0;
+    double snapLastMs_ = 0.0;
 };
 
 }

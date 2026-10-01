@@ -292,6 +292,17 @@ int64_t UnixNowMs() {
     return FileTimeToUnixMs(now);
 }
 
+double MonotonicMs() {
+    static const double frequency = [] {
+        LARGE_INTEGER value = {};
+        QueryPerformanceFrequency(&value);
+        return static_cast<double>(value.QuadPart);
+    }();
+    LARGE_INTEGER counter = {};
+    QueryPerformanceCounter(&counter);
+    return static_cast<double>(counter.QuadPart) * 1000.0 / frequency;
+}
+
 int64_t FileTimeToUnixMs(const FILETIME& fileTime) {
     const int64_t ticks = (static_cast<int64_t>(fileTime.dwHighDateTime) << 32) | fileTime.dwLowDateTime;
     return (ticks - kUnixEpochIn100ns) / 10000;

@@ -39,6 +39,7 @@ bool ReadFileTail(const std::wstring& path, size_t maxBytes, std::string& out, u
 bool WriteFileAtomically(const std::wstring& path, std::string_view data);
 
 int64_t UnixNowMs();
+double MonotonicMs();
 int64_t FileTimeToUnixMs(const FILETIME& fileTime);
 int64_t ParseIsoTimestampMs(std::string_view text);
 

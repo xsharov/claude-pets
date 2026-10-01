@@ -1,6 +1,7 @@
 #include "overlay.h"
 
 #include "overlay_metrics.h"
+#include "util.h"
 
 #include <shellscalingapi.h>
 
@@ -85,7 +86,7 @@ void Overlay::SetExpanded(bool expanded) {
     if (!expanded_) {
         scrollOffset_ = 0;
     }
-    lastAnimationMs_ = static_cast<int64_t>(GetTickCount64());
+    lastAnimationMs_ = MonotonicMs();
     ApplyLayout(true);
     ScheduleTimer();
 }
@@ -104,6 +105,7 @@ Overlay::Layout Overlay::ComputeLayout() const {
     MONITORINFO info = {};
     info.cbSize = sizeof(info);
     GetMonitorInfoW(monitor, &info);
+    layout.monitor = monitor;
     layout.scale = scale;
     layout.work = info.rcWork;
 
@@ -130,7 +132,11 @@ Overlay::Layout Overlay::ComputeLayout() const {
     const float maxTrayX = work.right - kScreenMargin * scale - trayWidth;
     float trayX = mascotX + mascotW * 0.5f - trayWidth * 0.5f;
     trayX = maxTrayX < minTrayX ? minTrayX : std::clamp(trayX, minTrayX, maxTrayX);
-    const bool trayAbove = mascotY + mascotH * 0.5f > (work.top + work.bottom) * 0.5f;
+    const float centerOffset = mascotY + mascotH * 0.5f - (work.top + work.bottom) * 0.5f;
+    bool trayAbove = centerOffset > 0.0f;
+    if (layoutValid_ && std::fabs(centerOffset) < kTrayFlipHysteresis * scale) {
+        trayAbove = layout_.trayAbove;
+    }
     const float trayHeight = capacity > 0 ? (capacity * kPillHeight + (capacity - 1) * kPillGap + kMaxPeeks * kPeekOffset) * scale : 0.0f;
     const float nearEdge = trayAbove ? mascotY - kTrayGap * scale : mascotY + mascotH + kTrayGap * scale;
     const float trayTop = trayAbove ? nearEdge - trayHeight : nearEdge;
@@ -140,10 +146,12 @@ Overlay::Layout Overlay::ComputeLayout() const {
     float right = mascotX + mascotW;
     float bottom = mascotY + mascotH;
     if (capacity > 0) {
-        left = std::min(left, trayX);
-        right = std::max(right, trayX + trayWidth);
-        top = std::min(top, trayTop);
-        bottom = std::max(bottom, trayTop + trayHeight);
+        const float slackX = kLagSlackX * scale;
+        const float slackY = kLagSlackY * scale;
+        left = std::min(left, trayX - slackX);
+        right = std::max(right, trayX + trayWidth + slackX);
+        top = std::min(top, trayAbove ? trayTop - slackY : trayTop);
+        bottom = std::max(bottom, trayAbove ? trayTop + trayHeight : trayTop + trayHeight + slackY);
     }
     const float margin = kWindowMargin * scale;
     layout.window.left = static_cast<LONG>(std::floor(left - margin));
@@ -163,45 +171,67 @@ Overlay::Layout Overlay::ComputeLayout() const {
     return layout;
 }
 
+Overlay::LayoutChange Overlay::Relayout() {
+    const Layout next = ComputeLayout();
+    frameClock_.SetMonitor(next.monitor);
+    if (!layoutValid_) {
+        layout_ = next;
+        layoutValid_ = true;
+        lag_ = {};
+        UpdatePillTargets();
+        return LayoutChange::Geometry;
+    }
+    const bool flipped = next.trayAbove != layout_.trayAbove;
+    if (flipped || !Near(next.scale, layout_.scale)) {
+        layout_ = next;
+        lag_ = {};
+        UpdatePillTargets();
+        const float entrance = layout_.trayAbove ? kEntranceOffset : -kEntranceOffset;
+        for (PillState& pill : pills_) {
+            pill.rect = flipped ? Shift(pill.target, 0.0f, entrance) : pill.target;
+            if (flipped) {
+                pill.opacity = 0.0f;
+            }
+        }
+        return LayoutChange::Geometry;
+    }
+    const float dx = static_cast<float>(layout_.window.left - next.window.left) / next.scale;
+    const float dy = static_cast<float>(layout_.window.top - next.window.top) / next.scale;
+    const float trayDx = next.trayLeft - (layout_.trayLeft + dx);
+    const float trayDy = next.trayNearEdge - (layout_.trayNearEdge + dy);
+    const float shiftX = dx + trayDx;
+    const float shiftY = dy + trayDy;
+    if (shiftX != 0.0f || shiftY != 0.0f) {
+        for (PillState& pill : pills_) {
+            pill.rect = Shift(pill.rect, shiftX, shiftY);
+            pill.target = Shift(pill.target, shiftX, shiftY);
+        }
+    }
+    const bool resized = layout_.window.right - layout_.window.left != next.window.right - next.window.left ||
+                         layout_.window.bottom - layout_.window.top != next.window.bottom - next.window.top;
+    const bool moved = layout_.window.left != next.window.left || layout_.window.top != next.window.top;
+    const bool reshaped = resized || !SameRect(layout_.mascot, next.mascot) || !Near(layout_.trayLeft, next.trayLeft) || !Near(layout_.trayNearEdge, next.trayNearEdge);
+    const D2D1_POINT_2F lagBefore = lag_;
+    layout_ = next;
+    UpdatePillTargets();
+    if (trayDx != 0.0f || trayDy != 0.0f) {
+        ShiftLag(-trayDx, -trayDy);
+    }
+    const bool pillsShifted = PillsVisible() && (!Near(shiftX + lag_.x - lagBefore.x, 0.0f) || !Near(shiftY + lag_.y - lagBefore.y, 0.0f));
+    if (reshaped || pillsShifted) {
+        return LayoutChange::Geometry;
+    }
+    return moved ? LayoutChange::Moved : LayoutChange::None;
+}
+
 void Overlay::ApplyLayout(bool forceRender) {
     if (window_ == nullptr) {
         return;
     }
-    const Layout next = ComputeLayout();
-    bool geometryChanged = !layoutValid_;
-    if (layoutValid_) {
-        const bool sameScale = Near(next.scale, layout_.scale);
-        if (sameScale) {
-            const float dx = static_cast<float>(layout_.window.left - next.window.left) / next.scale;
-            const float dy = static_cast<float>(layout_.window.top - next.window.top) / next.scale;
-            if (dx != 0.0f || dy != 0.0f) {
-                for (PillState& pill : pills_) {
-                    pill.rect = Shift(pill.rect, dx, dy);
-                    pill.target = Shift(pill.target, dx, dy);
-                }
-            }
-        }
-        const LONG oldWidth = layout_.window.right - layout_.window.left;
-        const LONG oldHeight = layout_.window.bottom - layout_.window.top;
-        const LONG newWidth = next.window.right - next.window.left;
-        const LONG newHeight = next.window.bottom - next.window.top;
-        geometryChanged = !sameScale || oldWidth != newWidth || oldHeight != newHeight || !SameRect(layout_.mascot, next.mascot) ||
-                          !Near(layout_.trayLeft, next.trayLeft) || !Near(layout_.trayNearEdge, next.trayNearEdge) || layout_.trayAbove != next.trayAbove;
-        if (!sameScale) {
-            layout_ = next;
-            UpdatePillTargets();
-            for (PillState& pill : pills_) {
-                pill.rect = pill.target;
-            }
-        }
-    }
-    const bool moved = !layoutValid_ || layout_.window.left != next.window.left || layout_.window.top != next.window.top;
-    layout_ = next;
-    layoutValid_ = true;
-    UpdatePillTargets();
-    if (forceRender || geometryChanged || !frameValid_) {
+    const LayoutChange change = Relayout();
+    if (forceRender || change == LayoutChange::Geometry || !frameValid_) {
         Render(true);
-    } else if (moved && shown_) {
+    } else if (change == LayoutChange::Moved && shown_) {
         SetWindowPos(window_, nullptr, layout_.window.left, layout_.window.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     }
 }
@@ -299,33 +329,17 @@ void Overlay::UpdatePillTargets() {
     }
 }
 
-bool Overlay::StepAnimations(int64_t now) {
-    const float elapsed = static_cast<float>(std::clamp<int64_t>(now - lastAnimationMs_, 0, 50));
-    lastAnimationMs_ = now;
-    const float k = 1.0f - std::exp(-elapsed / 65.0f);
-    bool animating = false;
-    auto approach = [&](float& value, float target, float epsilon) {
-        const float delta = target - value;
-        if (std::fabs(delta) <= epsilon) {
-            value = target;
-            return;
+bool Overlay::PillsVisible() const {
+    for (const PillState& pill : pills_) {
+        if (pill.opacity > 0.01f || pill.targetOpacity > 0.0f) {
+            return true;
         }
-        value += delta * k;
-        animating = true;
-    };
-    for (PillState& pill : pills_) {
-        approach(pill.rect.left, pill.target.left, 0.2f);
-        approach(pill.rect.top, pill.target.top, 0.2f);
-        approach(pill.rect.right, pill.target.right, 0.2f);
-        approach(pill.rect.bottom, pill.target.bottom, 0.2f);
-        approach(pill.opacity, pill.targetOpacity, 0.01f);
     }
-    const size_t before = pills_.size();
-    pills_.erase(std::remove_if(pills_.begin(), pills_.end(), [](const PillState& pill) { return pill.leaving && pill.opacity <= 0.01f; }), pills_.end());
-    if (pills_.size() != before) {
-        ApplyLayout(true);
-    }
-    return animating;
+    return false;
+}
+
+D2D1_RECT_F Overlay::PillRect(const PillState& pill) const {
+    return Shift(pill.rect, lag_.x, lag_.y);
 }
 
 std::optional<D2D1_RECT_F> Overlay::BadgeRect() const {
@@ -420,6 +434,7 @@ void Overlay::HandleDisplayChange() {
     }
     frameValid_ = false;
     ApplyLayout(true);
+    ScheduleTimer();
 }
 
 void Overlay::SetMascotWidth(int widthDip) {
@@ -440,6 +455,7 @@ void Overlay::SetMascotWidth(int widthDip) {
     }
     frameValid_ = false;
     ApplyLayout(true);
+    ScheduleTimer();
 }
 
 }

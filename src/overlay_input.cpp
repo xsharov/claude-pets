@@ -2,6 +2,7 @@
 
 #include "log.h"
 #include "overlay_metrics.h"
+#include "util.h"
 
 #include <windowsx.h>
 
@@ -31,7 +32,7 @@ bool ContainsRounded(const D2D1_RECT_F& rect, D2D1_POINT_2F point) {
 }
 
 int64_t Ticks() {
-    return static_cast<int64_t>(GetTickCount64());
+    return static_cast<int64_t>(MonotonicMs());
 }
 
 }
@@ -43,7 +44,7 @@ Overlay::Hit Overlay::HitTest(POINT clientPx) const {
     const D2D1_POINT_2F point = D2D1::Point2F(clientPx.x / layout_.scale, clientPx.y / layout_.scale);
     if ((hover_.part == HitPart::Pill || hover_.part == HitPart::Dismiss) && hover_.pill >= 0 && hover_.pill < static_cast<int>(pills_.size())) {
         const PillState& pill = pills_[static_cast<size_t>(hover_.pill)];
-        const D2D1_RECT_F dismiss = Renderer::DismissRect(pill.rect);
+        const D2D1_RECT_F dismiss = Renderer::DismissRect(PillRect(pill));
         if (!pill.leaving && pill.depth == 0 && Contains(dismiss, point)) {
             return {HitPart::Dismiss, hover_.pill};
         }
@@ -57,7 +58,7 @@ Overlay::Hit Overlay::HitTest(POINT clientPx) const {
             if (pill.leaving || pill.depth != depth || pill.opacity < 0.3f || pill.targetOpacity <= 0.0f) {
                 continue;
             }
-            if (ContainsRounded(pill.rect, point)) {
+            if (ContainsRounded(PillRect(pill), point)) {
                 return {pill.contentVisible && depth == 0 ? HitPart::Pill : HitPart::Peek, static_cast<int>(i)};
             }
         }
@@ -169,28 +170,6 @@ void Overlay::OnMouseMove(POINT clientPx, WPARAM keys) {
             lookFrame_.reset();
             hoverMascot_ = false;
             lastDragX_ = pressCursor_.x;
-        }
-        if (dragging_) {
-            const int64_t now = Ticks();
-            const LONG step = cursor.x - lastDragX_;
-            if (step >= kDragThresholdPx) {
-                transientAnim_ = PetAnim::RunningRight;
-                lastDragX_ = cursor.x;
-            } else if (step <= -kDragThresholdPx) {
-                transientAnim_ = PetAnim::RunningLeft;
-                lastDragX_ = cursor.x;
-            }
-            RefreshAnim(now);
-            const float scale = layout_.scale;
-            POINT anchor = {cursor.x - static_cast<LONG>(std::lround(grabFractionX_ * mascotWidth_ * scale)),
-                            cursor.y - static_cast<LONG>(std::lround(grabFractionY_ * MascotHeightDip() * scale))};
-            MONITORINFO info = {};
-            info.cbSize = sizeof(info);
-            GetMonitorInfoW(MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST), &info);
-            MoveAnchor(ClampAnchor(anchor, info.rcWork, scale));
-            if (drawnFrame_ != (lookFrame_.has_value() ? *lookFrame_ : animator_.Frame())) {
-                Render(false);
-            }
             ScheduleTimer();
         }
         return;
@@ -248,10 +227,11 @@ void Overlay::OnLeftUp(POINT clientPx) {
     }
     const int64_t now = Ticks();
     if (wasDragging) {
-        transientAnim_.reset();
-        RefreshAnim(now);
         POINT cursor = {};
         GetCursorPos(&cursor);
+        MoveAnchor(DragAnchor(cursor));
+        transientAnim_.reset();
+        RefreshAnim(now);
         if (GetKeyState(VK_MENU) < 0) {
             StartSnap(cursor);
         } else {
@@ -327,7 +307,7 @@ void Overlay::OnWheel(int delta) {
         return;
     }
     scrollOffset_ = next;
-    lastAnimationMs_ = Ticks();
+    lastAnimationMs_ = MonotonicMs();
     UpdatePillTargets();
     Render(true);
     ScheduleTimer();
@@ -344,6 +324,9 @@ void Overlay::OnCaptureLost() {
     pressed_ = false;
     dragging_ = false;
     if (wasDragging) {
+        POINT cursor = {};
+        GetCursorPos(&cursor);
+        MoveAnchor(DragAnchor(cursor));
         transientAnim_.reset();
         RefreshAnim(Ticks());
         PersistPosition();
@@ -363,14 +346,6 @@ bool Overlay::OnSetCursor() {
     const Hit hit = HitTest(cursor);
     SetCursor(LoadCursorW(nullptr, hit.part == HitPart::None ? IDC_ARROW : IDC_HAND));
     return true;
-}
-
-void Overlay::MoveAnchor(POINT anchor) {
-    if (anchor.x == anchor_.x && anchor.y == anchor_.y) {
-        return;
-    }
-    anchor_ = anchor;
-    ApplyLayout(false);
 }
 
 void Overlay::StartSnap(POINT cursor) {
@@ -399,33 +374,9 @@ void Overlay::StartSnap(POINT cursor) {
     snapY_ = static_cast<float>(anchor_.y);
     snapVx_ = 0.0f;
     snapVy_ = 0.0f;
-    snapStartMs_ = Ticks();
+    snapStartMs_ = MonotonicMs();
     snapLastMs_ = snapStartMs_;
     snapping_ = true;
-}
-
-bool Overlay::StepSnap(int64_t now) {
-    if (!snapping_) {
-        return false;
-    }
-    const float dt = static_cast<float>(std::clamp<int64_t>(now - snapLastMs_, 0, 32)) / 1000.0f;
-    snapLastMs_ = now;
-    const float ax = kSnapStiffness * (snapTarget_.x - snapX_) - kSnapDamping * snapVx_;
-    const float ay = kSnapStiffness * (snapTarget_.y - snapY_) - kSnapDamping * snapVy_;
-    snapVx_ += ax * dt;
-    snapVy_ += ay * dt;
-    snapX_ += snapVx_ * dt;
-    snapY_ += snapVy_ * dt;
-    const float distance = std::hypot(snapTarget_.x - snapX_, snapTarget_.y - snapY_);
-    const float speed = std::hypot(snapVx_, snapVy_);
-    if ((distance <= 0.5f && speed < 10.0f) || now - snapStartMs_ >= 1000) {
-        snapping_ = false;
-        MoveAnchor(snapTarget_);
-        PersistPosition();
-        return false;
-    }
-    MoveAnchor(POINT{static_cast<LONG>(std::lround(snapX_)), static_cast<LONG>(std::lround(snapY_))});
-    return true;
 }
 
 void Overlay::PersistPosition() {

@@ -3,11 +3,11 @@
 #include "log.h"
 #include "overlay_metrics.h"
 #include "resource.h"
+#include "util.h"
 
 #include <windowsx.h>
 
 #include <algorithm>
-#include <climits>
 #include <cmath>
 
 namespace cp {
@@ -19,7 +19,7 @@ namespace {
 constexpr wchar_t kWindowClass[] = L"ClaudePetsOverlay";
 
 int64_t Ticks() {
-    return static_cast<int64_t>(GetTickCount64());
+    return static_cast<int64_t>(MonotonicMs());
 }
 
 bool ReducedMotion() {
@@ -64,14 +64,16 @@ bool Overlay::Create(HINSTANCE instance, OverlayCallbacks callbacks) {
         return false;
     }
     ChangeWindowMessageFilterEx(window_, WM_COPYDATA, MSGFLT_ALLOW, nullptr);
+    frameClock_.Start(window_, kFrameMessage);
     shimmerEpochMs_ = Ticks();
-    lastAnimationMs_ = shimmerEpochMs_;
+    lastAnimationMs_ = MonotonicMs();
     animator_.SetReducedMotion(ReducedMotion(), shimmerEpochMs_);
     animator_.Play(PetAnim::Idle, shimmerEpochMs_);
     return true;
 }
 
 void Overlay::Destroy() {
+    frameClock_.Stop();
     if (window_ != nullptr) {
         KillTimer(window_, kAnimationTimer);
         KillTimer(window_, kCollapseTimer);
@@ -134,9 +136,13 @@ LRESULT Overlay::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
             return TRUE;
         }
         break;
+    case kFrameMessage:
+        frameClock_.FrameHandled();
+        Advance(MonotonicMs());
+        return 0;
     case WM_TIMER:
         if (wParam == kAnimationTimer) {
-            OnTimer(Ticks());
+            Advance(MonotonicMs());
             return 0;
         }
         if (wParam == kCollapseTimer) {
@@ -189,6 +195,7 @@ void Overlay::Hide() {
     }
     shown_ = false;
     KillTimer(window_, kAnimationTimer);
+    frameClock_.SetActive(false);
     ShowWindow(window_, SW_HIDE);
 }
 
@@ -229,12 +236,12 @@ void Overlay::SetNotices(std::vector<Notice> notices, PetAnim mascotAnim) {
     }
     baseAnim_ = mascotAnim;
     if (listChanged) {
-        lastAnimationMs_ = now;
+        lastAnimationMs_ = MonotonicMs();
         SyncPills();
         ApplyLayout(true);
     }
     RefreshAnim(now);
-    if (drawnFrame_ != (lookFrame_.has_value() ? *lookFrame_ : animator_.Frame())) {
+    if (drawnFrame_ != CurrentFrame()) {
         Render(false);
     }
     ScheduleTimer();
@@ -247,7 +254,7 @@ void Overlay::SetActivityVisible(bool visible) {
     activityVisible_ = visible;
     expanded_ = false;
     scrollOffset_ = 0;
-    lastAnimationMs_ = Ticks();
+    lastAnimationMs_ = MonotonicMs();
     ApplyLayout(true);
     ScheduleTimer();
 }
@@ -378,7 +385,8 @@ void Overlay::Render(bool full) {
         }
         for (const PillState& pill : pills_) {
             if (pill.notice.loading && pill.contentVisible && pill.opacity > 0.05f) {
-                const D2D1_RECT_F line = D2D1::RectF(pill.rect.left + 12.0f, pill.rect.top + 26.0f, pill.rect.right - 12.0f, pill.rect.top + 46.0f);
+                const D2D1_RECT_F rect = PillRect(pill);
+                const D2D1_RECT_F line = D2D1::RectF(rect.left + 12.0f, rect.top + 26.0f, rect.right - 12.0f, rect.top + 46.0f);
                 partial = UnionRect(partial, DipToWindowPx(line));
             }
         }
@@ -401,7 +409,7 @@ void Overlay::Render(bool full) {
         const PillState& pill = *order[index];
         const int pillIndex = static_cast<int>(&pill - pills_.data());
         PillVisual visual;
-        visual.rect = pill.rect;
+        visual.rect = PillRect(pill);
         visual.opacity = std::clamp(pill.opacity, 0.0f, 1.0f);
         visual.title = pill.notice.title;
         visual.subtitle = pill.notice.subtitle;
@@ -415,7 +423,7 @@ void Overlay::Render(bool full) {
         visual.dismissHovered = hover_.part == HitPart::Dismiss && hover_.pill == pillIndex;
         renderer_.DrawPill(visual);
     }
-    const SpriteFrame frame = lookFrame_.has_value() ? *lookFrame_ : animator_.Frame();
+    const SpriteFrame frame = CurrentFrame();
     renderer_.FillHitArea(MascotHitRect());
     if (renderer_.HasSprite()) {
         renderer_.DrawPet(layout_.mascot, frame, 1.0f);
@@ -442,84 +450,6 @@ void Overlay::Render(bool full) {
     } else {
         frameValid_ = false;
     }
-}
-
-void Overlay::OnTimer(int64_t now) {
-    if (!shown_) {
-        KillTimer(window_, kAnimationTimer);
-        return;
-    }
-    bool full = false;
-    bool partial = false;
-    if (snapping_) {
-        StepSnap(now);
-    }
-    full = StepAnimations(now);
-    FinishPressIfReleased();
-    PollHover();
-    animator_.Tick(now);
-    UpdateLook(now);
-    const SpriteFrame frame = lookFrame_.has_value() ? *lookFrame_ : animator_.Frame();
-    if (!(frame == drawnFrame_)) {
-        partial = true;
-    }
-    if (HasVisibleLoading() && now - lastShimmerMs_ >= kShimmerIntervalMs) {
-        lastShimmerMs_ = now;
-        partial = true;
-    }
-    if (full) {
-        Render(true);
-    } else if (partial) {
-        Render(false);
-    }
-    ScheduleTimer();
-}
-
-void Overlay::ScheduleTimer() {
-    if (window_ == nullptr) {
-        return;
-    }
-    if (!shown_) {
-        KillTimer(window_, kAnimationTimer);
-        return;
-    }
-    const int64_t now = Ticks();
-    int64_t next = LLONG_MAX;
-    bool animating = snapping_;
-    for (const PillState& pill : pills_) {
-        if (pill.opacity != pill.targetOpacity || pill.rect.left != pill.target.left || pill.rect.top != pill.target.top ||
-            pill.rect.right != pill.target.right || pill.rect.bottom != pill.target.bottom) {
-            animating = true;
-            break;
-        }
-    }
-    if (animating) {
-        next = now + 16;
-    }
-    if (!lookFrame_.has_value()) {
-        next = std::min(next, animator_.NextDeadlineMs());
-    }
-    if (HasVisibleLoading()) {
-        next = std::min(next, lastShimmerMs_ + kShimmerIntervalMs);
-    }
-    if (LookEligible()) {
-        next = std::min(next, std::max(nextLookPollMs_, now + 10));
-    }
-    if (lookFrame_.has_value() && !LookEligible()) {
-        next = std::min(next, now + 10);
-    }
-    if (hover_.part != HitPart::None || hoverMascot_ || expanded_) {
-        next = std::min(next, now + 100);
-    }
-    if (pressed_) {
-        next = std::min(next, now + 50);
-    }
-    if (next == LLONG_MAX) {
-        KillTimer(window_, kAnimationTimer);
-        return;
-    }
-    const int64_t delay = std::clamp<int64_t>(next - now, USER_TIMER_MINIMUM, 60000);
-    SetTimer(window_, kAnimationTimer, static_cast<UINT>(delay), nullptr);
 }
 
 }
