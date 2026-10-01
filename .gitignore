@@ -1,0 +1,12 @@
+/build/
+/out/
+/.vs/
+/.vscode/
+/.idea/
+*.user
+*.aps
+*.ncb
+*.sdf
+*.opensdf
+*.suo
+CMakeUserPresets.json
