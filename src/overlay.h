@@ -75,7 +75,6 @@ private:
         RECT work = {};
         RECT window = {};
         D2D1_RECT_F mascot = {};
-        D2D1_RECT_F badge = {};
         float trayLeft = 0.0f;
         float trayWidth = 0.0f;
         float trayNearEdge = 0.0f;
@@ -124,7 +123,9 @@ private:
     void UpdateLook(int64_t now);
     bool LookEligible() const;
     std::optional<D2D1_RECT_F> BadgeRect() const;
+    D2D1_RECT_F BadgeArea() const;
     bool BadgeVisible() const;
+    bool BadgeWanted() const;
     float ShimmerPhase(int64_t now) const;
     bool HasVisibleLoading() const;
     RECT DipToWindowPx(const D2D1_RECT_F& rect) const;
@@ -184,6 +185,7 @@ private:
 
     Hit hover_;
     bool hoverMascot_ = false;
+    int64_t badgeHoldUntilMs_ = 0;
     bool trackingLeave_ = false;
     bool collapsePending_ = false;
 

@@ -167,7 +167,6 @@ Overlay::Layout Overlay::ComputeLayout() const {
     layout.trayWidth = trayWidth / scale;
     layout.trayNearEdge = (nearEdge - originY) / scale;
     layout.trayAbove = trayAbove;
-    layout.badge = D2D1::RectF(layout.mascot.right - kBadgeSize, layout.mascot.top, layout.mascot.right, layout.mascot.top + kBadgeSize);
     return layout;
 }
 
@@ -346,17 +345,35 @@ std::optional<D2D1_RECT_F> Overlay::BadgeRect() const {
     if (!BadgeVisible()) {
         return std::nullopt;
     }
-    return layout_.badge;
+    return BadgeArea();
+}
+
+D2D1_RECT_F Overlay::BadgeArea() const {
+    const D2D1_RECT_F& mascot = layout_.mascot;
+    if (!activityVisible_ || !PillsVisible()) {
+        return D2D1::RectF(mascot.right - kBadgeSize, mascot.top, mascot.right, mascot.top + kBadgeSize);
+    }
+    const float half = kBadgeSize * 0.5f;
+    const float corner = kPillHeight * 0.5f;
+    const float minX = layout_.trayLeft + corner + half;
+    const float maxX = std::max(minX, layout_.trayLeft + layout_.trayWidth - corner - half);
+    const float centerX = std::clamp(mascot.right - half, minX, maxX) + lag_.x;
+    const float centerY = layout_.trayNearEdge + (layout_.trayAbove ? kBadgeDockOffset : -kBadgeDockOffset) + lag_.y;
+    return D2D1::RectF(centerX - half, centerY - half, centerX + half, centerY + half);
+}
+
+bool Overlay::BadgeWanted() const {
+    return hoverMascot_ || hover_.part == HitPart::Pill || hover_.part == HitPart::Peek || hover_.part == HitPart::Dismiss || hover_.part == HitPart::Badge;
 }
 
 bool Overlay::BadgeVisible() const {
     if (notices_.empty() || !layoutValid_) {
         return false;
     }
-    if (!activityVisible_) {
+    if (!activityVisible_ || BadgeWanted()) {
         return true;
     }
-    return hoverMascot_ || hover_.part == HitPart::Pill || hover_.part == HitPart::Peek || hover_.part == HitPart::Dismiss || hover_.part == HitPart::Badge;
+    return badgeHoldUntilMs_ != 0 && static_cast<int64_t>(MonotonicMs()) < badgeHoldUntilMs_;
 }
 
 D2D1_RECT_F Overlay::MascotHitRect() const {

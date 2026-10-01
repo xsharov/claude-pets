@@ -381,7 +381,7 @@ void Overlay::Render(bool full) {
         mascot.bottom += 2.0f;
         partial = DipToWindowPx(mascot);
         if (BadgeVisible()) {
-            partial = UnionRect(partial, DipToWindowPx(layout_.badge));
+            partial = UnionRect(partial, DipToWindowPx(BadgeArea()));
         }
         for (const PillState& pill : pills_) {
             if (pill.notice.loading && pill.contentVisible && pill.opacity > 0.05f) {
@@ -432,7 +432,7 @@ void Overlay::Render(bool full) {
     }
     if (BadgeVisible()) {
         BadgeVisual badge;
-        badge.rect = layout_.badge;
+        badge.rect = BadgeArea();
         badge.hovered = hover_.part == HitPart::Badge;
         const int count = static_cast<int>(notices_.size());
         if (!activityVisible_ || Expanded()) {

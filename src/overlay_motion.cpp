@@ -220,6 +220,10 @@ void Overlay::Advance(double now) {
     }
     bool relayout = false;
     const bool animating = StepAnimations(now, relayout);
+    const bool badgeExpired = badgeHoldUntilMs_ != 0 && ticks >= badgeHoldUntilMs_;
+    if (badgeExpired) {
+        badgeHoldUntilMs_ = 0;
+    }
     if (relayout) {
         Relayout();
     }
@@ -232,7 +236,7 @@ void Overlay::Advance(double now) {
         lastShimmerMs_ = ticks;
         partial = true;
     }
-    const bool full = animating || relayout || change == LayoutChange::Geometry;
+    const bool full = animating || relayout || badgeExpired || change == LayoutChange::Geometry;
     if (full || partial) {
         const double renderStart = MonotonicMs();
         Render(full);
@@ -281,6 +285,9 @@ void Overlay::ScheduleTimer() {
     }
     if (hover_.part != HitPart::None || hoverMascot_ || expanded_) {
         next = std::min(next, now + 100);
+    }
+    if (badgeHoldUntilMs_ != 0) {
+        next = std::min(next, badgeHoldUntilMs_);
     }
     if (pressed_) {
         next = std::min(next, now + 50);

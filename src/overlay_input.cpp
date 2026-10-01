@@ -71,6 +71,13 @@ Overlay::Hit Overlay::HitTest(POINT clientPx) const {
 
 void Overlay::UpdateHover(const Hit& hit) {
     const int64_t now = Ticks();
+    const bool keepsBadge = hit.part == HitPart::Mascot || hit.part == HitPart::Pill || hit.part == HitPart::Peek || hit.part == HitPart::Dismiss ||
+                            hit.part == HitPart::Badge;
+    if (keepsBadge) {
+        badgeHoldUntilMs_ = 0;
+    } else if (BadgeWanted()) {
+        badgeHoldUntilMs_ = now + kBadgeGraceMs;
+    }
     if (LogEnabled() && !(hit == hover_)) {
         LogLine("hover " + std::to_string(static_cast<int>(hover_.part)) + ":" + std::to_string(hover_.pill) + " -> " + std::to_string(static_cast<int>(hit.part)) + ":" +
                 std::to_string(hit.pill) + " expanded=" + std::to_string(expanded_));
