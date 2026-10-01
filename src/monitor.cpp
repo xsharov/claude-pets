@@ -123,6 +123,10 @@ void SessionMonitor::Run() {
         const int64_t now = UnixNowMs();
         DrainQueues(now);
         Cycle(now);
+        const int64_t spent = UnixNowMs() - now;
+        if (spent > 150 && LogEnabled()) {
+            LogLine("slow cycle " + std::to_string(spent) + " ms");
+        }
         WaitForSingleObject(wakeEvent_, static_cast<DWORD>(kCycleMs));
     }
 }
@@ -376,7 +380,7 @@ SessionView SessionMonitor::BuildView(const DesktopSession& session, Tracked& tr
         LogLine("status " + session.sessionId + " " + std::to_string(static_cast<int>(tracked.lastStatus)) + "->" + std::to_string(static_cast<int>(view.status)) +
                 " transcript=" + std::to_string(static_cast<int>(transcript.phase)) + "@" + std::to_string(transcript.lastEntryMs) +
                 " hook=" + (hook != nullptr ? std::to_string(static_cast<int>(hook->phase)) + "@" + std::to_string(hook->atMs) : std::string("none")) +
-                " now=" + std::to_string(now));
+                " merged=" + std::to_string(static_cast<int>(phase)) + " claude=" + std::to_string(claudeRunning_) + " now=" + std::to_string(now));
     }
     tracked.lastStatus = view.status;
     tracked.seen = true;
@@ -411,7 +415,11 @@ void SessionMonitor::TrackForegroundReading(int64_t now, int64_t newestFocus) {
 
 void SessionMonitor::Cycle(int64_t now) {
     if (now >= nextRegistryMs_) {
-        store_.Refresh();
+        if (store_.Refresh() && LogEnabled()) {
+            for (const DesktopSession& session : store_.Sessions()) {
+                LogLine("registry " + session.sessionId + " cli=" + session.cliSessionId + " file=" + Narrow(session.filePath));
+            }
+        }
         nextRegistryMs_ = now + kRegistryIntervalMs;
     }
     if (now >= nextProcessCheckMs_) {

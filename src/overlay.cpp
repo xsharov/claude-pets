@@ -1,5 +1,6 @@
 #include "overlay.h"
 
+#include "log.h"
 #include "overlay_metrics.h"
 #include "resource.h"
 
@@ -139,6 +140,7 @@ LRESULT Overlay::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
         if (wParam == kCollapseTimer) {
+            LogLine("collapse timer hover=" + std::to_string(static_cast<int>(hover_.part)));
             KillTimer(window_, kCollapseTimer);
             collapsePending_ = false;
             if (!(hover_.part == HitPart::Pill || hover_.part == HitPart::Peek || hover_.part == HitPart::Dismiss || hover_.part == HitPart::Badge)) {

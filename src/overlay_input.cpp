@@ -70,6 +70,10 @@ Overlay::Hit Overlay::HitTest(POINT clientPx) const {
 
 void Overlay::UpdateHover(const Hit& hit) {
     const int64_t now = Ticks();
+    if (LogEnabled() && !(hit == hover_)) {
+        LogLine("hover " + std::to_string(static_cast<int>(hover_.part)) + ":" + std::to_string(hover_.pill) + " -> " + std::to_string(static_cast<int>(hit.part)) + ":" +
+                std::to_string(hit.pill) + " expanded=" + std::to_string(expanded_));
+    }
     const bool mascotHover = hit.part == HitPart::Mascot;
     bool changed = false;
     if (mascotHover != hoverMascot_) {
@@ -196,6 +200,7 @@ void Overlay::OnMouseMove(POINT clientPx, WPARAM keys) {
 
 void Overlay::OnMouseLeave() {
     trackingLeave_ = false;
+    LogLine("mouse leave");
     if (pressed_) {
         return;
     }
