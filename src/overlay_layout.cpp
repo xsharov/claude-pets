@@ -122,7 +122,7 @@ Overlay::Layout Overlay::ComputeLayout() const {
         }
     }
     int capacity = std::max(ExpandedCapacity(), std::min(visiblePills, kMaxExpanded));
-    if (visiblePills == 0) {
+    if (visiblePills == 0 && VisibleNoticeCount() == 0) {
         capacity = 0;
     }
 

@@ -167,12 +167,15 @@ bool Overlay::StepAnimations(double now, bool& relayout) {
         value += delta * k;
         animating = true;
     };
+    bool fadedOut = false;
     for (PillState& pill : pills_) {
         approach(pill.rect.left, pill.target.left, 0.2f);
         approach(pill.rect.top, pill.target.top, 0.2f);
         approach(pill.rect.right, pill.target.right, 0.2f);
         approach(pill.rect.bottom, pill.target.bottom, 0.2f);
+        const bool wasVisible = pill.opacity > 0.01f;
         approach(pill.opacity, pill.targetOpacity, 0.01f);
+        fadedOut = fadedOut || (wasVisible && pill.opacity <= 0.01f);
     }
     if (lag_.x != 0.0f || lag_.y != 0.0f) {
         animating = true;
@@ -182,7 +185,7 @@ bool Overlay::StepAnimations(double now, bool& relayout) {
     }
     const size_t before = pills_.size();
     pills_.erase(std::remove_if(pills_.begin(), pills_.end(), [](const PillState& pill) { return pill.leaving && pill.opacity <= 0.01f; }), pills_.end());
-    relayout = pills_.size() != before;
+    relayout = fadedOut || pills_.size() != before;
     return animating;
 }
 
