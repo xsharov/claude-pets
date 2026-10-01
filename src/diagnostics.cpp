@@ -86,9 +86,12 @@ int RunDiagnostics() {
     out += "claude desktop running: " + std::string(IsClaudeDesktopRunning() ? "yes" : "no") + "\n";
     const HookState hooks = QueryHookState(ExecutablePath());
     out += "hooks: " + std::string(hooks == HookState::Installed ? "installed" : hooks == HookState::Outdated ? "outdated" : hooks == HookState::Unreadable ? "unreadable" : "not installed") + "\n";
-    out += "pets:\n";
-    for (const PetInfo& pet : DiscoverPets()) {
-        out += "  " + Narrow(pet.key) + "  \"" + Narrow(pet.displayName) + "\"  v" + std::to_string(pet.spriteVersion) + "  " + Narrow(pet.spritesheet) + "\n";
+    const PetSource active = ResolvePetSource(LoadSettings().petsFolder);
+    for (const PetSource source : {PetSource::Claude, PetSource::Codex}) {
+        out += "pets in " + Narrow(PetFolder(source)) + (source == active ? " (active)" : "") + ":\n";
+        for (const PetInfo& pet : DiscoverPets(source)) {
+            out += "  " + Narrow(pet.key) + "  \"" + Narrow(pet.displayName) + "\"  v" + std::to_string(pet.spriteVersion) + "  " + Narrow(pet.spritesheet) + "\n";
+        }
     }
     const CodexPetPreference preference = ReadCodexPetPreference();
     out += "codex preference: pet=" + Narrow(preference.petKey) + " width=" + std::to_string(preference.mascotWidth) + "\n";

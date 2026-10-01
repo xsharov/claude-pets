@@ -19,18 +19,6 @@ std::wstring CodexHome() {
     return JoinPath(HomeDirectory(), L".codex");
 }
 
-struct PetRoot {
-    std::wstring path;
-    std::wstring source;
-};
-
-std::vector<PetRoot> Roots() {
-    return {
-        {JoinPath(CodexHome(), L"pets"), L"codex"},
-        {JoinPath(ClaudeConfigDirectory(), L"pets"), L"claude"},
-    };
-}
-
 bool LoadPet(const std::wstring& directory, const std::wstring& folderName, const std::wstring& source, PetInfo& pet) {
     std::string manifestText;
     Json manifest;
@@ -128,23 +116,31 @@ std::wstring ResolveCloudPetId(const std::string& cloudId) {
 
 }
 
-std::vector<std::wstring> PetRoots() {
-    std::vector<std::wstring> result;
-    for (const PetRoot& root : Roots()) {
-        result.push_back(root.path);
-    }
-    return result;
+std::wstring PetFolder(PetSource source) {
+    return source == PetSource::Codex ? JoinPath(CodexHome(), L"pets") : JoinPath(ClaudeConfigDirectory(), L"pets");
 }
 
-std::vector<PetInfo> DiscoverPets() {
+const wchar_t* PetSourceKey(PetSource source) {
+    return source == PetSource::Codex ? L"codex" : L"claude";
+}
+
+PetSource ResolvePetSource(const std::wstring& setting) {
+    if (setting == L"codex") {
+        return PetSource::Codex;
+    }
+    if (setting == L"claude" || !DiscoverPets(PetSource::Claude).empty() || DiscoverPets(PetSource::Codex).empty()) {
+        return PetSource::Claude;
+    }
+    return PetSource::Codex;
+}
+
+std::vector<PetInfo> DiscoverPets(PetSource source) {
     std::vector<PetInfo> pets;
-    for (const PetRoot& root : Roots()) {
-        if (!DirectoryExists(root.path)) {
-            continue;
-        }
-        for (const std::wstring& folder : ListDirectories(root.path)) {
+    const std::wstring root = PetFolder(source);
+    if (DirectoryExists(root)) {
+        for (const std::wstring& folder : ListDirectories(root)) {
             PetInfo pet;
-            if (LoadPet(JoinPath(root.path, folder), folder, root.source, pet)) {
+            if (LoadPet(JoinPath(root, folder), folder, PetSourceKey(source), pet)) {
                 pets.push_back(std::move(pet));
             }
         }
@@ -153,6 +149,11 @@ std::vector<PetInfo> DiscoverPets() {
         return ToLower(a.displayName) < ToLower(b.displayName);
     });
     return pets;
+}
+
+std::wstring PetFolderName(const std::wstring& key) {
+    const size_t colon = key.find(L':');
+    return colon == std::wstring::npos ? key : key.substr(colon + 1);
 }
 
 const PetInfo* FindPet(const std::vector<PetInfo>& pets, const std::wstring& key) {

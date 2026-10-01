@@ -45,6 +45,8 @@ enum Command : UINT {
     kCommandMute,
     kCommandUnmuteAll,
     kCommandTrayShow,
+    kCommandPetsClaude,
+    kCommandPetsCodex,
 };
 
 constexpr int kSizes[] = {80, 112, 160, 224};
@@ -179,11 +181,15 @@ void App::RegisterToggleHotkey() {
 }
 
 void App::RefreshPets() {
-    pets_ = DiscoverPets();
+    petSource_ = ResolvePetSource(settings_.petsFolder);
+    pets_ = DiscoverPets(petSource_);
 }
 
 void App::SelectPet(const std::wstring& key, bool persist) {
     const PetInfo* pet = FindPet(pets_, key);
+    if (pet == nullptr) {
+        pet = FindPet(pets_, std::wstring(PetSourceKey(petSource_)) + L":" + PetFolderName(key));
+    }
     if (pet == nullptr && !pets_.empty()) {
         pet = &pets_.front();
     }
@@ -484,6 +490,18 @@ void App::ShowContextMenu(POINT screen) {
         AppendMenuW(petMenu, MF_STRING | Checked(pets_[i].key == activePetKey_), kCommandPetBase + static_cast<UINT>(i), pets_[i].displayName.c_str());
     }
     AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(petMenu), text.menuPet);
+    HMENU folderMenu = CreatePopupMenu();
+    const std::wstring home = HomeDirectory();
+    for (const PetSource source : {PetSource::Claude, PetSource::Codex}) {
+        std::wstring folder = PetFolder(source);
+        if (!home.empty() && StartsWith(ToLower(folder), ToLower(home))) {
+            folder = L"~" + folder.substr(home.size());
+        }
+        const size_t count = source == petSource_ ? pets_.size() : DiscoverPets(source).size();
+        const std::wstring label = folder + L"  (" + std::to_wstring(count) + L")";
+        AppendMenuW(folderMenu, MF_STRING | Checked(source == petSource_), source == PetSource::Codex ? kCommandPetsCodex : kCommandPetsClaude, label.c_str());
+    }
+    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(folderMenu), text.menuPetsFolder);
     HMENU sizeMenu = CreatePopupMenu();
     const wchar_t* sizeLabels[] = {text.sizeSmall, text.sizeMedium, text.sizeLarge, text.sizeHuge};
     const int currentSize = NearestSizeIndex(settings_.mascotWidth);
@@ -603,18 +621,18 @@ void App::ExecuteCommand(UINT command) {
         ActivateClaude();
         break;
     case kCommandOpenPetsFolder: {
-        const std::vector<std::wstring> roots = PetRoots();
-        std::wstring folder = roots.front();
-        for (const std::wstring& root : roots) {
-            if (DirectoryExists(root)) {
-                folder = root;
-                break;
-            }
-        }
+        const std::wstring folder = PetFolder(petSource_);
         EnsureDirectory(folder);
         ShellExecuteW(nullptr, L"open", folder.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
         break;
     }
+    case kCommandPetsClaude:
+    case kCommandPetsCodex:
+        settings_.petsFolder = command == kCommandPetsCodex ? L"codex" : L"claude";
+        RefreshPets();
+        SelectPet(settings_.petKey, true);
+        ScheduleSave();
+        break;
     case kCommandAutostart:
         SetAutostart(executable_, !IsAutostartEnabled(executable_));
         break;

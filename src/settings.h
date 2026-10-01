@@ -17,6 +17,7 @@ struct SavedPosition {
 
 struct Settings {
     std::wstring petKey;
+    std::wstring petsFolder = L"auto";
     int mascotWidth = 112;
     bool showActivity = true;
     bool lookAtCursor = true;

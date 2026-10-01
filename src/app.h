@@ -59,6 +59,7 @@ private:
     std::wstring executable_;
     Settings settings_;
     std::vector<PetInfo> pets_;
+    PetSource petSource_ = PetSource::Claude;
     std::wstring activePetKey_;
     Overlay overlay_;
     SessionMonitor monitor_;

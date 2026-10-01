@@ -30,6 +30,9 @@ Settings LoadSettings() {
     }
     settings.existed = true;
     settings.petKey = Widen(root["pet"].str());
+    if (root["petsFolder"].isString()) {
+        settings.petsFolder = Widen(root["petsFolder"].str());
+    }
     settings.mascotWidth = static_cast<int>(root["mascotWidth"].integer(settings.mascotWidth));
     settings.showActivity = root["showActivity"].boolean(settings.showActivity);
     settings.lookAtCursor = root["lookAtCursor"].boolean(settings.lookAtCursor);
@@ -68,6 +71,7 @@ Settings LoadSettings() {
 bool SaveSettings(const Settings& settings) {
     Json root = Json::MakeObject();
     root.set("pet", Json::MakeString(Narrow(settings.petKey)));
+    root.set("petsFolder", Json::MakeString(Narrow(settings.petsFolder)));
     root.set("mascotWidth", Json::MakeInteger(settings.mascotWidth));
     root.set("showActivity", Json::MakeBool(settings.showActivity));
     root.set("lookAtCursor", Json::MakeBool(settings.lookAtCursor));

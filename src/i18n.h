@@ -45,6 +45,7 @@ struct Strings {
     const wchar_t* menuLookAtCursor;
     const wchar_t* menuOpenClaude;
     const wchar_t* menuOpenPetsFolder;
+    const wchar_t* menuPetsFolder;
     const wchar_t* menuStartWithWindows;
     const wchar_t* menuHooks;
     const wchar_t* menuLanguage;
