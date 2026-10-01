@@ -3,6 +3,7 @@
 #include "claude_app.h"
 #include "hooks.h"
 #include "i18n.h"
+#include "log.h"
 #include "resource.h"
 #include "util.h"
 
@@ -205,6 +206,11 @@ void App::SelectPet(const std::wstring& key, bool persist) {
         MessageBoxW(overlay_.Handle(), message.c_str(), L"Claude Pets", MB_ICONWARNING | MB_SETFOREGROUND | MB_TOPMOST);
     }
     activePetKey_ = pet->key;
+    if (LogEnabled()) {
+        const D2D1_RECT_F& bounds = graphics.SpriteContentBounds();
+        LogLine("pet " + Narrow(pet->key) + " rows=" + std::to_string(graphics.SpriteRows()) + " bounds=" + std::to_string(bounds.left) + "," + std::to_string(bounds.top) + "," +
+                std::to_string(bounds.right) + "," + std::to_string(bounds.bottom));
+    }
     if (persist || settings_.petKey != pet->key) {
         settings_.petKey = pet->key;
         ScheduleSave();
@@ -488,6 +494,9 @@ void App::ShowContextMenu(POINT screen) {
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING | Checked(settings_.showActivity), kCommandShowActivity, text.menuShowActivity);
     AppendMenuW(menu, MF_STRING | Checked(settings_.lookAtCursor), kCommandLookAtCursor, text.menuLookAtCursor);
+    if (!settings_.muted.empty()) {
+        AppendMenuW(menu, MF_STRING, kCommandUnmuteAll, text.menuUnmuteAll);
+    }
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kCommandOpenClaude, text.menuOpenClaude);
     AppendMenuW(menu, MF_STRING, kCommandOpenPetsFolder, text.menuOpenPetsFolder);
@@ -628,6 +637,11 @@ void App::ExecuteCommand(UINT command) {
         break;
     case kCommandTrayShow:
         ShowPet();
+        break;
+    case kCommandUnmuteAll:
+        settings_.muted.clear();
+        ScheduleSave();
+        RebuildNotices();
         break;
     default:
         break;

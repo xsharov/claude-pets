@@ -345,6 +345,15 @@ bool Overlay::BadgeVisible() const {
     return hoverMascot_ || hover_.part == HitPart::Pill || hover_.part == HitPart::Peek || hover_.part == HitPart::Dismiss || hover_.part == HitPart::Badge;
 }
 
+D2D1_RECT_F Overlay::MascotHitRect() const {
+    const D2D1_RECT_F& mascot = layout_.mascot;
+    const D2D1_RECT_F& bounds = renderer_.SpriteContentBounds();
+    const float width = mascot.right - mascot.left;
+    const float height = mascot.bottom - mascot.top;
+    return D2D1::RectF(mascot.left + bounds.left * width - 2.0f, mascot.top + bounds.top * height - 2.0f, mascot.left + bounds.right * width + 2.0f,
+                       mascot.top + bounds.bottom * height + 2.0f);
+}
+
 RECT Overlay::DipToWindowPx(const D2D1_RECT_F& rect) const {
     const float s = layout_.scale;
     const LONG width = layout_.window.right - layout_.window.left;
@@ -406,7 +415,9 @@ void Overlay::HandleDisplayChange() {
         return;
     }
     const Layout probe = ComputeLayout();
-    anchor_ = ClampAnchor(anchor_, probe.work, probe.scale);
+    if (!dragging_) {
+        anchor_ = ClampAnchor(anchor_, probe.work, probe.scale);
+    }
     frameValid_ = false;
     ApplyLayout(true);
 }

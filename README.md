@@ -67,6 +67,7 @@ Claude Pets показывает на рабочем столе питомца �
 - **Size** — размер: 80, 112, 160 или 224.
 - **Show activity** — показывать баблы.
 - **Follow the cursor** — поворачиваться к курсору.
+- **Unmute all sessions** — снова показывать заглушённые сессии; пункт есть, только если такие сессии есть.
 - **Open Claude**, **Open pets folder**.
 - **Start with Windows**.
 - **Precise status (Claude Code hooks)** — установить или удалить хуки, см. ниже.

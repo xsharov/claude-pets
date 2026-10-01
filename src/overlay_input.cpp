@@ -1,5 +1,6 @@
 #include "overlay.h"
 
+#include "log.h"
 #include "overlay_metrics.h"
 
 #include <windowsx.h>
@@ -61,7 +62,7 @@ Overlay::Hit Overlay::HitTest(POINT clientPx) const {
             }
         }
     }
-    if (Contains(layout_.mascot, point) && renderer_.AlphaAt(clientPx.x, clientPx.y) > 8) {
+    if (Contains(MascotHitRect(), point)) {
         return {HitPart::Mascot, -1};
     }
     return {};
@@ -118,12 +119,34 @@ void Overlay::PollHover() {
     if (cursor.x >= window.left && cursor.x < window.right && cursor.y >= window.top && cursor.y < window.bottom) {
         hit = HitTest(POINT{cursor.x - window.left, cursor.y - window.top});
     }
-    if (!(hit == hover_) || (hit.part == HitPart::Mascot) != hoverMascot_) {
+    const bool trayHit = hit.part == HitPart::Pill || hit.part == HitPart::Peek || hit.part == HitPart::Dismiss || hit.part == HitPart::Badge;
+    const bool collapseNeeded = expanded_ && !trayHit && !collapsePending_;
+    if (!(hit == hover_) || (hit.part == HitPart::Mascot) != hoverMascot_ || collapseNeeded) {
         UpdateHover(hit);
     }
 }
 
-void Overlay::OnMouseMove(POINT clientPx) {
+void Overlay::FinishPressIfReleased() {
+    if (!pressed_) {
+        return;
+    }
+    const int primary = GetSystemMetrics(SM_SWAPBUTTON) != 0 ? VK_RBUTTON : VK_LBUTTON;
+    if ((GetAsyncKeyState(primary) & 0x8000) != 0) {
+        return;
+    }
+    POINT cursor = {};
+    GetCursorPos(&cursor);
+    ScreenToClient(window_, &cursor);
+    LogLine("button released without WM_LBUTTONUP");
+    OnLeftUp(cursor);
+}
+
+void Overlay::OnMouseMove(POINT clientPx, WPARAM keys) {
+    if (pressed_ && (keys & MK_LBUTTON) == 0) {
+        LogLine("mouse move without button during press");
+        OnLeftUp(clientPx);
+        return;
+    }
     if (!trackingLeave_) {
         TRACKMOUSEEVENT track = {};
         track.cbSize = sizeof(track);
@@ -181,6 +204,9 @@ void Overlay::OnMouseLeave() {
 
 void Overlay::OnLeftDown(POINT clientPx) {
     const Hit hit = HitTest(clientPx);
+    if (LogEnabled()) {
+        LogLine("left down at " + std::to_string(clientPx.x) + "," + std::to_string(clientPx.y) + " part=" + std::to_string(static_cast<int>(hit.part)));
+    }
     if (hit.part == HitPart::None) {
         return;
     }
@@ -198,9 +224,13 @@ void Overlay::OnLeftDown(POINT clientPx) {
         snapping_ = false;
     }
     SetCapture(window_);
+    ScheduleTimer();
 }
 
 void Overlay::OnLeftUp(POINT clientPx) {
+    if (LogEnabled()) {
+        LogLine("left up at " + std::to_string(clientPx.x) + "," + std::to_string(clientPx.y) + " pressed=" + std::to_string(pressed_) + " dragging=" + std::to_string(dragging_));
+    }
     if (!pressed_) {
         return;
     }
@@ -228,7 +258,7 @@ void Overlay::OnLeftUp(POINT clientPx) {
         return;
     }
     const Hit released = HitTest(clientPx);
-    if (released.part != pressed.part || released.pill != pressed.pill) {
+    if (pressed.part != HitPart::Mascot && (released.part != pressed.part || released.pill != pressed.pill)) {
         return;
     }
     switch (pressed.part) {
@@ -299,6 +329,9 @@ void Overlay::OnWheel(int delta) {
 }
 
 void Overlay::OnCaptureLost() {
+    if (LogEnabled()) {
+        LogLine("capture lost pressed=" + std::to_string(pressed_) + " dragging=" + std::to_string(dragging_));
+    }
     if (!pressed_) {
         return;
     }

@@ -311,7 +311,7 @@ SessionView SessionMonitor::BuildView(const DesktopSession& session, Tracked& tr
             }
             break;
         case TurnPhase::Interrupted:
-            if (hook->atMs >= transcriptMs) {
+            if (hook->atMs >= transcriptMs && (phase == TurnPhase::Running || phase == TurnPhase::Waiting)) {
                 phase = TurnPhase::Interrupted;
             }
             break;

@@ -110,9 +110,11 @@ private:
     float ShimmerPhase(int64_t now) const;
     bool HasVisibleLoading() const;
     RECT DipToWindowPx(const D2D1_RECT_F& rect) const;
+    D2D1_RECT_F MascotHitRect() const;
 
     Hit HitTest(POINT clientPx) const;
-    void OnMouseMove(POINT clientPx);
+    void OnMouseMove(POINT clientPx, WPARAM keys);
+    void FinishPressIfReleased();
     void OnMouseLeave();
     void OnLeftDown(POINT clientPx);
     void OnLeftUp(POINT clientPx);

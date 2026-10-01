@@ -1,5 +1,6 @@
 #include "claude_app.h"
 
+#include "log.h"
 #include "util.h"
 
 #include <shellapi.h>
@@ -135,6 +136,7 @@ bool ForceForeground(HWND window) {
     if (attached) {
         AttachThreadInput(currentThread, foregroundThread, FALSE);
     }
+    LogLine("force foreground attached=" + std::to_string(attached) + " result=" + std::to_string(result));
     return result;
 }
 
@@ -207,6 +209,10 @@ void BringClaudeToFront() {
 bool ActivateClaude() {
     AllowSetForegroundWindow(ASFW_ANY);
     const HWND window = FindClaudeMainWindow();
+    if (LogEnabled()) {
+        LogLine("activate claude window=" + std::to_string(reinterpret_cast<uintptr_t>(window)) + " visible=" + std::to_string(window != nullptr && IsWindowVisible(window)) +
+                " iconic=" + std::to_string(window != nullptr && IsIconic(window)));
+    }
     if (window != nullptr && (IsWindowVisible(window) || IsIconic(window))) {
         if (IsIconic(window)) {
             ShowWindow(window, SW_RESTORE);

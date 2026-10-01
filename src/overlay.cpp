@@ -106,7 +106,7 @@ LRESULT Overlay::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
     case WM_MOUSEACTIVATE:
         return MA_NOACTIVATE;
     case WM_MOUSEMOVE:
-        OnMouseMove(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
+        OnMouseMove(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)}, wParam);
         return 0;
     case WM_MOUSELEAVE:
         OnMouseLeave();
@@ -414,6 +414,7 @@ void Overlay::Render(bool full) {
         renderer_.DrawPill(visual);
     }
     const SpriteFrame frame = lookFrame_.has_value() ? *lookFrame_ : animator_.Frame();
+    renderer_.FillHitArea(MascotHitRect());
     if (renderer_.HasSprite()) {
         renderer_.DrawPet(layout_.mascot, frame, 1.0f);
     } else {
@@ -452,6 +453,7 @@ void Overlay::OnTimer(int64_t now) {
         StepSnap(now);
     }
     full = StepAnimations(now);
+    FinishPressIfReleased();
     PollHover();
     animator_.Tick(now);
     UpdateLook(now);
@@ -506,6 +508,9 @@ void Overlay::ScheduleTimer() {
     }
     if (hover_.part != HitPart::None || hoverMascot_ || expanded_) {
         next = std::min(next, now + 100);
+    }
+    if (pressed_) {
+        next = std::min(next, now + 50);
     }
     if (next == LLONG_MAX) {
         KillTimer(window_, kAnimationTimer);

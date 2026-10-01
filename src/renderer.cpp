@@ -31,6 +31,46 @@ D2D1_RECT_F Inflate(const D2D1_RECT_F& rect, float dx, float dy) {
     return D2D1::RectF(rect.left - dx, rect.top - dy, rect.right + dx, rect.bottom + dy);
 }
 
+D2D1_RECT_F ComputeContentBounds(IWICBitmap* bitmap, UINT width, UINT height, int rows, float cellWidth, float cellHeight) {
+    const D2D1_RECT_F full = D2D1::RectF(0.0f, 0.0f, 1.0f, 1.0f);
+    const WICRect area = {0, 0, static_cast<INT>(width), static_cast<INT>(height)};
+    ComPtr<IWICBitmapLock> lock;
+    UINT stride = 0;
+    UINT size = 0;
+    BYTE* data = nullptr;
+    if (FAILED(bitmap->Lock(&area, WICBitmapLockRead, &lock)) || FAILED(lock->GetStride(&stride)) || FAILED(lock->GetDataPointer(&size, &data)) || data == nullptr) {
+        return full;
+    }
+    const int cellW = static_cast<int>(cellWidth);
+    const int cellH = static_cast<int>(cellHeight);
+    if (cellW <= 0 || cellH <= 0) {
+        return full;
+    }
+    int minX = cellW;
+    int minY = cellH;
+    int maxX = -1;
+    int maxY = -1;
+    const UINT usedHeight = std::min<UINT>(height, static_cast<UINT>(rows * cellH));
+    for (UINT y = 0; y < usedHeight; ++y) {
+        const BYTE* row = data + static_cast<size_t>(y) * stride;
+        const int cellY = static_cast<int>(y) % cellH;
+        for (UINT x = 0; x < width; ++x) {
+            if (row[x * 4 + 3] <= 24) {
+                continue;
+            }
+            const int cellX = static_cast<int>(x) % cellW;
+            minX = std::min(minX, cellX);
+            maxX = std::max(maxX, cellX);
+            minY = std::min(minY, cellY);
+            maxY = std::max(maxY, cellY);
+        }
+    }
+    if (maxX < minX || maxY < minY) {
+        return full;
+    }
+    return D2D1::RectF(static_cast<float>(minX) / cellW, static_cast<float>(minY) / cellH, static_cast<float>(maxX + 1) / cellW, static_cast<float>(maxY + 1) / cellH);
+}
+
 std::wstring PickFontFamily(IDWriteFactory* factory) {
     ComPtr<IDWriteFontCollection> collection;
     if (SUCCEEDED(factory->GetSystemFontCollection(&collection, FALSE))) {
@@ -114,7 +154,6 @@ void Renderer::ReleaseSurface() {
         SelectObject(memoryDc_, previousBitmap_);
         DeleteObject(dib_);
         dib_ = nullptr;
-        bits_ = nullptr;
         previousBitmap_ = nullptr;
     }
     surfaceWidth_ = 0;
@@ -142,7 +181,6 @@ bool Renderer::EnsureSurface(int widthPx, int heightPx) {
     if (dib_ == nullptr) {
         return false;
     }
-    bits_ = static_cast<const uint8_t*>(bits);
     previousBitmap_ = SelectObject(memoryDc_, dib_);
     surfaceWidth_ = width;
     surfaceHeight_ = height;
@@ -181,6 +219,7 @@ bool Renderer::LoadSpritesheet(const std::wstring& path, int declaredVersion, st
         error = L"decode";
         return false;
     }
+    contentBounds_ = ComputeContentBounds(cached.Get(), width, height, spriteRows_, cellWidth_, cellHeight_);
     sheetSource_ = cached;
     sheetPath_ = path;
     sheetVersion_ = declaredVersion;
@@ -191,6 +230,7 @@ void Renderer::UnloadSpritesheet() {
     sheetSource_.Reset();
     sheetBitmap_.Reset();
     sheetPath_.clear();
+    contentBounds_ = D2D1::RectF(0.0f, 0.0f, 1.0f, 1.0f);
     spriteRows_ = kSpriteRowsV1;
 }
 
@@ -429,12 +469,8 @@ void Renderer::DrawPetPlaceholder(const D2D1_RECT_F& rect) {
     target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(rect.left + width * 0.62f, eyeY), eye, eye * 1.4f), Brush(Rgba(0x1F1F1F, 1.0f), 1.0f));
 }
 
-uint8_t Renderer::AlphaAt(int x, int y) const {
-    if (bits_ == nullptr || x < 0 || y < 0 || x >= frameWidth_ || y >= frameHeight_ || x >= surfaceWidth_ || y >= surfaceHeight_) {
-        return 0;
-    }
-    GdiFlush();
-    return bits_[(static_cast<size_t>(y) * static_cast<size_t>(surfaceWidth_) + static_cast<size_t>(x)) * 4 + 3];
+void Renderer::FillHitArea(const D2D1_RECT_F& rect) {
+    target_->FillRectangle(rect, Brush(D2D1::ColorF(0, 0, 0, 1.0f / 255.0f), 1.0f));
 }
 
 D2D1_RECT_F Renderer::DismissRect(const D2D1_RECT_F& pill) {

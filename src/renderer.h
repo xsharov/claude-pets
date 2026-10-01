@@ -56,6 +56,8 @@ public:
     bool LoadSpritesheet(const std::wstring& path, int declaredVersion, std::wstring& error);
     void UnloadSpritesheet();
     bool HasSprite() const { return sheetSource_ != nullptr || sheetBitmap_ != nullptr; }
+    const D2D1_RECT_F& SpriteContentBounds() const { return contentBounds_; }
+    void FillHitArea(const D2D1_RECT_F& rect);
     int SpriteRows() const { return spriteRows_; }
 
     bool BeginFrame(int widthPx, int heightPx, float scale, const RECT* partial);
@@ -67,7 +69,6 @@ public:
     void DrawBadge(const BadgeVisual& badge);
 
     static D2D1_RECT_F DismissRect(const D2D1_RECT_F& pill);
-    uint8_t AlphaAt(int x, int y) const;
 
 private:
     struct Palette {
@@ -111,7 +112,6 @@ private:
 
     HDC memoryDc_ = nullptr;
     HBITMAP dib_ = nullptr;
-    const uint8_t* bits_ = nullptr;
     HGDIOBJ previousBitmap_ = nullptr;
     int surfaceWidth_ = 0;
     int surfaceHeight_ = 0;
@@ -127,6 +127,7 @@ private:
     std::wstring sheetPath_;
     float cellWidth_ = 192.0f;
     float cellHeight_ = 208.0f;
+    D2D1_RECT_F contentBounds_ = {0.0f, 0.0f, 1.0f, 1.0f};
 };
 
 }
