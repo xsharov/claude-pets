@@ -2,6 +2,8 @@
 
 #include "util.h"
 
+#include <algorithm>
+#include <unordered_map>
 #include <vector>
 
 namespace cp {
@@ -9,6 +11,7 @@ namespace cp {
 namespace {
 
 constexpr size_t kTailWindows[] = {size_t{256} << 10, size_t{2} << 20, size_t{12} << 20};
+constexpr size_t kAgentWindow = size_t{4} << 20;
 constexpr size_t kMaxEntriesScanned = 800;
 constexpr size_t kTextLimit = 160;
 
@@ -58,6 +61,21 @@ std::string Summarize(std::string_view text) {
     return TruncateUtf8(FirstMeaningfulLine(text), kTextLimit);
 }
 
+bool EndsTurn(std::string_view stop) {
+    return stop == "end_turn" || stop == "stop_sequence" || stop == "max_tokens" || stop == "refusal" || stop == "model_context_window_exceeded";
+}
+
+std::string ProgressNote(const Json& content) {
+    for (size_t index = content.size(); index-- > 0;) {
+        const Json& block = content[index];
+        std::string note = Summarize(block["type"].str() == "thinking" ? block["thinking"].str() : block["text"].str());
+        if (!note.empty()) {
+            return note;
+        }
+    }
+    return {};
+}
+
 std::string HostOf(std::string_view url) {
     const size_t scheme = url.find("://");
     std::string_view rest = scheme == std::string_view::npos ? url : url.substr(scheme + 3);
@@ -93,6 +111,103 @@ std::string PathLeaf(const Json& input) {
     return {};
 }
 
+bool WakesMainThread(std::string_view queued) {
+    return StartsWith(queued, "<task-notification>") || StartsWith(queued, "<agent-message");
+}
+
+std::string_view TagValue(std::string_view text, std::string_view tag) {
+    const std::string open = "<" + std::string(tag) + ">";
+    const size_t start = text.find(open);
+    if (start == std::string_view::npos) {
+        return {};
+    }
+    const size_t from = start + open.size();
+    const size_t end = text.find("</" + std::string(tag) + ">", from);
+    return end == std::string_view::npos ? std::string_view() : text.substr(from, end - from);
+}
+
+std::string QueuedText(const Json& entry, std::string_view type) {
+    if (type == "queue-operation") {
+        return entry["content"].str();
+    }
+    if (type == "attachment") {
+        return entry["attachment"]["prompt"].str();
+    }
+    return type == "user" ? TextOf(entry["message"]["content"]) : std::string();
+}
+
+std::string ToolUseIdOf(const Json& entry) {
+    for (const Json& block : entry["message"]["content"].items()) {
+        if (block["type"].str() == "tool_result") {
+            return block["tool_use_id"].str();
+        }
+    }
+    return {};
+}
+
+void FinishAgents(std::string_view text, std::vector<BackgroundAgent>& agents) {
+    constexpr std::string_view kOpen = "<task-notification>";
+    for (size_t start = text.find(kOpen); start != std::string_view::npos; start = text.find(kOpen, start + kOpen.size())) {
+        const size_t end = text.find("</task-notification>", start);
+        const std::string_view block = text.substr(start, end == std::string_view::npos ? std::string_view::npos : end - start);
+        if (TagValue(block, "status").empty()) {
+            continue;
+        }
+        const std::string_view id = TagValue(block, "task-id");
+        const std::string_view call = TagValue(block, "tool-use-id");
+        std::erase_if(agents, [&](const BackgroundAgent& agent) {
+            return agent.id == id && (call.empty() || agent.toolUseId.empty() || agent.toolUseId == call);
+        });
+    }
+}
+
+void CollectBackgroundAgents(const std::vector<std::string_view>& lines, std::vector<BackgroundAgent>& agents) {
+    std::unordered_map<std::string, std::string> agentTypes;
+    std::unordered_map<std::string, BackgroundAgent> records;
+    for (const std::string_view line : lines) {
+        const bool agentCall = line.find("\"subagent_type\"") != std::string_view::npos;
+        const bool started = line.find("\"async_launched\"") != std::string_view::npos || line.find("\"resumedAgentId\"") != std::string_view::npos;
+        const bool notified = line.find("<task-notification>") != std::string_view::npos;
+        if (line.front() != '{' || (!agentCall && !started && !notified)) {
+            continue;
+        }
+        Json entry;
+        if (!ParseJson(line, entry) || entry["isSidechain"].boolean()) {
+            continue;
+        }
+        const std::string& type = entry["type"].str();
+        if (type == "assistant") {
+            for (const Json& block : entry["message"]["content"].items()) {
+                const std::string& agentType = block["input"]["subagent_type"].str();
+                if (block["type"].str() == "tool_use" && !agentType.empty()) {
+                    agentTypes[block["id"].str()] = agentType;
+                }
+            }
+            continue;
+        }
+        const Json& result = entry["toolUseResult"];
+        const bool launched = result["status"].str() == "async_launched";
+        const std::string& id = launched ? result["agentId"].str() : result["resumedAgentId"].str();
+        if (type == "user" && !id.empty()) {
+            BackgroundAgent& record = records[id];
+            record.id = id;
+            record.toolUseId = ToolUseIdOf(entry);
+            record.startedMs = ParseIsoTimestampMs(entry["timestamp"].str());
+            if (launched) {
+                record.description = TruncateUtf8(result["description"].str(), 80);
+                const auto call = agentTypes.find(record.toolUseId);
+                record.type = call != agentTypes.end() ? call->second : std::string();
+            }
+            std::erase_if(agents, [&](const BackgroundAgent& known) { return known.id == id; });
+            agents.push_back(record);
+            continue;
+        }
+        if (notified) {
+            FinishAgents(QueuedText(entry, type), agents);
+        }
+    }
+}
+
 UserKind ClassifyUser(const Json& content) {
     if (content.isArray()) {
         for (const Json& block : content.items()) {
@@ -124,8 +239,7 @@ void ClassifyAssistant(const Json& entry, TranscriptSnapshot& out, bool& needFin
         out.finalText = Summarize(TextOf(content));
         return;
     }
-    const std::string& stop = message["stop_reason"].str();
-    if (stop == "end_turn" || stop == "stop_sequence" || stop == "max_tokens" || stop == "refusal" || stop == "model_context_window_exceeded") {
+    if (EndsTurn(message["stop_reason"].str())) {
         out.phase = TurnPhase::Completed;
         needFinalText = true;
         return;
@@ -150,6 +264,8 @@ void ClassifyAssistant(const Json& entry, TranscriptSnapshot& out, bool& needFin
 bool AnalyzeLines(const std::vector<std::string_view>& lines, TranscriptSnapshot& out) {
     bool terminalFound = false;
     bool needFinalText = false;
+    bool pastTurnEnd = false;
+    int64_t wakeMs = 0;
     size_t scanned = 0;
     for (size_t index = lines.size(); index-- > 0;) {
         const std::string_view line = lines[index];
@@ -161,7 +277,7 @@ bool AnalyzeLines(const std::vector<std::string_view>& lines, TranscriptSnapshot
             continue;
         }
         const std::string& type = entry["type"].str();
-        if (type != "assistant" && type != "user" && type != "system") {
+        if (type != "assistant" && type != "user" && type != "system" && type != "queue-operation") {
             continue;
         }
         if (entry["isSidechain"].boolean()) {
@@ -171,6 +287,12 @@ bool AnalyzeLines(const std::vector<std::string_view>& lines, TranscriptSnapshot
             break;
         }
         const int64_t timestamp = ParseIsoTimestampMs(entry["timestamp"].str());
+        if (type == "queue-operation") {
+            if (!terminalFound && wakeMs == 0 && entry["operation"].str() == "enqueue" && WakesMainThread(entry["content"].str())) {
+                wakeMs = timestamp;
+            }
+            continue;
+        }
         if (type == "system") {
             if (terminalFound) {
                 continue;
@@ -205,9 +327,17 @@ bool AnalyzeLines(const std::vector<std::string_view>& lines, TranscriptSnapshot
             if (needFinalText && out.finalText.empty()) {
                 out.finalText = Summarize(TextOf(entry["message"]["content"]));
             }
+            if (out.activity.kind == ActivityKind::Thinking && out.activity.detail.empty() && !pastTurnEnd) {
+                const Json& message = entry["message"];
+                pastTurnEnd = EndsTurn(message["stop_reason"].str());
+                if (!pastTurnEnd) {
+                    out.activity.detail = ProgressNote(message["content"]);
+                }
+            }
             continue;
         }
-        if (entry["isMeta"].boolean() || entry["isCompactSummary"].boolean() || entry["isVisibleInTranscriptOnly"].boolean()) {
+        const bool peerMessage = entry["origin"]["kind"].str() == "peer";
+        if ((entry["isMeta"].boolean() && !peerMessage) || entry["isCompactSummary"].boolean() || entry["isVisibleInTranscriptOnly"].boolean()) {
             continue;
         }
         const UserKind kind = ClassifyUser(entry["message"]["content"]);
@@ -231,6 +361,13 @@ bool AnalyzeLines(const std::vector<std::string_view>& lines, TranscriptSnapshot
             out.turnStartedMs = timestamp;
             break;
         }
+    }
+    if (terminalFound && wakeMs > 0 && out.phase != TurnPhase::Running && out.phase != TurnPhase::Waiting) {
+        out.phase = TurnPhase::Running;
+        out.activity = {ActivityKind::Thinking, {}};
+        out.lastEntryMs = wakeMs;
+        out.completedMs = 0;
+        out.finalText.clear();
     }
     return terminalFound;
 }
@@ -301,6 +438,17 @@ bool AnalyzeTranscript(const std::wstring& path, TranscriptSnapshot& out) {
         const bool truncated = data.size() < fileSize;
         const std::vector<std::string_view> lines = SplitLines(data, truncated);
         if (AnalyzeLines(lines, out)) {
+            if (out.phase == TurnPhase::Running || out.phase == TurnPhase::Waiting) {
+                return true;
+            }
+            if (!truncated || window >= kAgentWindow) {
+                CollectBackgroundAgents(lines, out.backgroundAgents);
+                return true;
+            }
+            std::string deeper;
+            if (ReadFileTail(path, kAgentWindow, deeper, fileSize)) {
+                CollectBackgroundAgents(SplitLines(deeper, deeper.size() < fileSize), out.backgroundAgents);
+            }
             return true;
         }
         out = TranscriptSnapshot{};

@@ -19,3 +19,9 @@ __pycache__/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# MemPalace local memory
+.mempalace/
+mempalace.yaml
+entities.json
+

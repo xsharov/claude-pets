@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace cp {
 
@@ -20,6 +21,8 @@ enum class ActivityKind : uint8_t {
     WebSearch,
     WebFetch,
     Agent,
+    BackgroundAgent,
+    Reviewing,
     Todo,
     Skill,
     Tool,
@@ -37,6 +40,15 @@ struct Activity {
 
 enum class TurnPhase : uint8_t { Unknown, Running, Waiting, Completed, Interrupted, Failed };
 
+struct BackgroundAgent {
+    std::string id;
+    std::string toolUseId;
+    std::string type;
+    std::string description;
+    int64_t startedMs = 0;
+    bool operator==(const BackgroundAgent&) const = default;
+};
+
 struct TranscriptSnapshot {
     TurnPhase phase = TurnPhase::Unknown;
     Activity activity;
@@ -47,6 +59,7 @@ struct TranscriptSnapshot {
     std::string finalText;
     std::string lastAssistantUuid;
     std::string pendingToolUseId;
+    std::vector<BackgroundAgent> backgroundAgents;
 };
 
 Activity ActivityForTool(std::string_view name, const Json& input);

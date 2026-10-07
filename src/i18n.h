@@ -11,6 +11,7 @@ enum class Language : uint8_t { English, Russian };
 
 struct Strings {
     const wchar_t* thinking;
+    const wchar_t* thinkingDetail;
     const wchar_t* writing;
     const wchar_t* retrying;
     const wchar_t* runningCommand;
@@ -21,6 +22,8 @@ struct Strings {
     const wchar_t* searchingWeb;
     const wchar_t* fetching;
     const wchar_t* agent;
+    const wchar_t* backgroundAgent;
+    const wchar_t* reviewing;
     const wchar_t* updatingPlan;
     const wchar_t* usingSkill;
     const wchar_t* calling;

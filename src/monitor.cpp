@@ -23,6 +23,66 @@ constexpr int64_t kRunningStaleMs = 45 * 60 * 1000;
 constexpr int64_t kRecentSessionMs = 7LL * 24 * 60 * 60 * 1000;
 constexpr int64_t kForegroundDwellMs = 1500;
 constexpr int64_t kSubagentCheckMs = 10000;
+constexpr int64_t kAgentCheckMs = 2000;
+
+std::wstring SessionDirectory(const std::wstring& transcriptPath) {
+    return transcriptPath.size() > 6 ? transcriptPath.substr(0, transcriptPath.size() - 6) : std::wstring();
+}
+
+bool LetterBefore(std::string_view text, size_t position) {
+    if (position == 0) {
+        return false;
+    }
+    size_t lead = position - 1;
+    while (lead > 0 && (static_cast<unsigned char>(text[lead]) & 0xC0) == 0x80) {
+        --lead;
+    }
+    const unsigned char c = static_cast<unsigned char>(text[lead]);
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || (c >= 0xD0 && c <= 0xD4);
+}
+
+bool HasWord(std::string_view text, std::string_view lower, std::string_view word) {
+    for (size_t at = lower.find(word); at != std::string_view::npos; at = lower.find(word, at + 1)) {
+        const bool camelCase = at > 0 && text[at] >= 'A' && text[at] <= 'Z' && text[at - 1] >= 'a' && text[at - 1] <= 'z';
+        if (!LetterBefore(text, at) || camelCase) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool MentionsReview(std::string_view text) {
+    std::string lower(text);
+    for (char& c : lower) {
+        if (c >= 'A' && c <= 'Z') {
+            c = static_cast<char>(c - 'A' + 'a');
+        }
+    }
+    return HasWord(text, lower, "review") || HasWord(text, lower, "ревью") || HasWord(text, lower, "Ревью");
+}
+
+void FillFromAgentMeta(const std::wstring& path, BackgroundAgent& agent) {
+    std::string text;
+    Json meta;
+    if (!ReadWholeFile(path, text, size_t{64} << 10) || !ParseJson(text, meta) || !meta.isObject()) {
+        return;
+    }
+    if (agent.type.empty()) {
+        agent.type = meta["agentType"].str();
+    }
+    if (agent.description.empty()) {
+        agent.description = TruncateUtf8(meta["description"].str(), 80);
+    }
+}
+
+Activity BackgroundActivity(const std::vector<BackgroundAgent>& agents) {
+    for (const BackgroundAgent& agent : agents) {
+        if (MentionsReview(agent.type) || MentionsReview(agent.description)) {
+            return {ActivityKind::Reviewing, {}};
+        }
+    }
+    return {ActivityKind::BackgroundAgent, agents.back().description};
+}
 
 std::string SessionTitle(const DesktopSession& session) {
     if (!session.title.empty()) {
@@ -225,13 +285,44 @@ bool SessionMonitor::ResolveTranscript(Tracked& tracked, const DesktopSession& s
 }
 
 void SessionMonitor::RefreshSubagentActivity(Tracked& tracked, int64_t now) {
-    if (now < tracked.nextSubagentCheckMs || tracked.transcriptPath.size() <= 6) {
+    const std::wstring sessionDirectory = SessionDirectory(tracked.transcriptPath);
+    if (now < tracked.nextSubagentCheckMs || sessionDirectory.empty()) {
         return;
     }
     tracked.nextSubagentCheckMs = now + kSubagentCheckMs;
-    const std::wstring sessionDirectory = tracked.transcriptPath.substr(0, tracked.transcriptPath.size() - 6);
     if (DirectoryExists(sessionDirectory)) {
         tracked.activityMs = std::max(tracked.activityMs, NewestModifiedUnder(sessionDirectory, 2));
+    }
+}
+
+void SessionMonitor::RefreshBackgroundAgents(Tracked& tracked, int64_t now) {
+    const std::vector<BackgroundAgent>& pending = tracked.transcript.backgroundAgents;
+    if (pending.empty()) {
+        tracked.runningAgents.clear();
+        return;
+    }
+    if (now < tracked.nextAgentCheckMs) {
+        return;
+    }
+    tracked.nextAgentCheckMs = now + kAgentCheckMs;
+    tracked.runningAgents.clear();
+    const std::wstring sessionDirectory = SessionDirectory(tracked.transcriptPath);
+    for (const BackgroundAgent& pendingAgent : pending) {
+        BackgroundAgent agent = pendingAgent;
+        const std::wstring stem = sessionDirectory.empty() ? std::wstring() : JoinPath(sessionDirectory, L"subagents\\agent-" + Widen(agent.id));
+        int64_t lastSignal = agent.startedMs;
+        FileStamp stamp;
+        if (!stem.empty() && StatFile(stem + L".jsonl", stamp)) {
+            lastSignal = std::max(lastSignal, stamp.modifiedMs);
+        }
+        if (lastSignal < claudeStartedMs_ || now - lastSignal > kRunningStaleMs) {
+            continue;
+        }
+        if (!stem.empty() && (agent.type.empty() || agent.description.empty())) {
+            FillFromAgentMeta(stem + L".meta.json", agent);
+        }
+        tracked.activityMs = std::max(tracked.activityMs, lastSignal);
+        tracked.runningAgents.push_back(std::move(agent));
     }
 }
 
@@ -268,6 +359,7 @@ void SessionMonitor::UpdateTranscript(Tracked& tracked, const DesktopSession& se
     TranscriptSnapshot snapshot;
     if (AnalyzeTranscript(tracked.transcriptPath, snapshot)) {
         tracked.transcript = std::move(snapshot);
+        tracked.nextAgentCheckMs = 0;
     }
     tracked.stamp = stamp;
     tracked.analyzed = true;
@@ -322,6 +414,13 @@ SessionView SessionMonitor::BuildView(const DesktopSession& session, Tracked& tr
         default:
             break;
         }
+    }
+    const bool sessionEnded = hook != nullptr && hook->phase == TurnPhase::Interrupted && hook->atMs >= transcript.lastEntryMs;
+    const bool turnEnded = transcript.phase == TurnPhase::Completed || transcript.phase == TurnPhase::Interrupted;
+    if (!tracked.runningAgents.empty() && !sessionEnded && turnEnded &&
+        (phase == TurnPhase::Completed || phase == TurnPhase::Interrupted || phase == TurnPhase::Running)) {
+        phase = TurnPhase::Running;
+        activity = BackgroundActivity(tracked.runningAgents);
     }
     if (phase == TurnPhase::Running || phase == TurnPhase::Waiting) {
         const int64_t lastSignal = std::max({tracked.activityMs, transcript.lastEntryMs, hook != nullptr ? hook->atMs : 0});
@@ -380,7 +479,8 @@ SessionView SessionMonitor::BuildView(const DesktopSession& session, Tracked& tr
         LogLine("status " + session.sessionId + " " + std::to_string(static_cast<int>(tracked.lastStatus)) + "->" + std::to_string(static_cast<int>(view.status)) +
                 " transcript=" + std::to_string(static_cast<int>(transcript.phase)) + "@" + std::to_string(transcript.lastEntryMs) +
                 " hook=" + (hook != nullptr ? std::to_string(static_cast<int>(hook->phase)) + "@" + std::to_string(hook->atMs) : std::string("none")) +
-                " merged=" + std::to_string(static_cast<int>(phase)) + " claude=" + std::to_string(claudeRunning_) + " now=" + std::to_string(now));
+                " merged=" + std::to_string(static_cast<int>(phase)) + " agents=" + std::to_string(tracked.runningAgents.size()) + "/" +
+                std::to_string(transcript.backgroundAgents.size()) + " claude=" + std::to_string(claudeRunning_) + " now=" + std::to_string(now));
     }
     tracked.lastStatus = view.status;
     tracked.seen = true;
@@ -423,7 +523,8 @@ void SessionMonitor::Cycle(int64_t now) {
         nextRegistryMs_ = now + kRegistryIntervalMs;
     }
     if (now >= nextProcessCheckMs_) {
-        claudeRunning_ = IsClaudeDesktopRunning();
+        claudeStartedMs_ = ClaudeDesktopStartedMs();
+        claudeRunning_ = claudeStartedMs_ != 0;
         nextProcessCheckMs_ = now + kProcessIntervalMs;
     }
     int64_t newestFocus = 0;
@@ -458,6 +559,7 @@ void SessionMonitor::Cycle(int64_t now) {
         const bool hot = tracked.lastStatus == SessionStatus::Running || tracked.lastStatus == SessionStatus::Waiting ||
                          now - session.lastActivityAt < kHotWindowMs || (hook != nullptr && now - hook->atMs < kHotWindowMs);
         UpdateTranscript(tracked, session, hook, now, hot);
+        RefreshBackgroundAgents(tracked, now);
         if (!tracked.analyzed && hook == nullptr) {
             continue;
         }

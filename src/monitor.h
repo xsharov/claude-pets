@@ -47,9 +47,11 @@ private:
         int64_t nextStatMs = 0;
         int64_t lastAnalyzeMs = 0;
         int64_t nextSubagentCheckMs = 0;
+        int64_t nextAgentCheckMs = 0;
         FileStamp stamp;
         bool analyzed = false;
         TranscriptSnapshot transcript;
+        std::vector<BackgroundAgent> runningAgents;
         int64_t activityMs = 0;
         std::string readTurnKey;
         SessionStatus lastStatus = SessionStatus::Idle;
@@ -64,6 +66,7 @@ private:
     void UpdateTranscript(Tracked& tracked, const DesktopSession& session, const HookState* hook, int64_t now, bool hot);
     bool ResolveTranscript(Tracked& tracked, const DesktopSession& session, const HookState* hook);
     void RefreshSubagentActivity(Tracked& tracked, int64_t now);
+    void RefreshBackgroundAgents(Tracked& tracked, int64_t now);
     SessionView BuildView(const DesktopSession& session, Tracked& tracked, const HookState* hook, int64_t now, int64_t newestFocus);
     void TrackForegroundReading(int64_t now, int64_t newestFocus);
     void Publish(std::vector<SessionView> views);
@@ -86,6 +89,7 @@ private:
     std::unordered_map<std::string, HookState> hooks_;
     int64_t nextRegistryMs_ = 0;
     int64_t nextProcessCheckMs_ = 0;
+    int64_t claudeStartedMs_ = 0;
     bool claudeRunning_ = false;
     bool claudeForeground_ = false;
     int64_t foregroundSinceMs_ = 0;

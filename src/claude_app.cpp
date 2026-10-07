@@ -45,6 +45,20 @@ std::wstring ProcessImagePath(DWORD processId) {
     return path;
 }
 
+int64_t ProcessStartedMs(DWORD processId) {
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
+    if (process == nullptr) {
+        return 0;
+    }
+    FILETIME created = {};
+    FILETIME exited = {};
+    FILETIME kernel = {};
+    FILETIME user = {};
+    const bool known = GetProcessTimes(process, &created, &exited, &kernel, &user) != FALSE;
+    CloseHandle(process);
+    return known ? FileTimeToUnixMs(created) : 0;
+}
+
 bool IsClaudeDesktopWindow(HWND window) {
     DWORD processId = 0;
     GetWindowThreadProcessId(window, &processId);
@@ -157,24 +171,31 @@ bool IsClaudeDesktopPath(const std::wstring& imagePath) {
            lower.find(L"\\programs\\claude\\") != std::wstring::npos || lower.find(L"\\claude\\app\\") != std::wstring::npos;
 }
 
-bool IsClaudeDesktopRunning() {
+int64_t ClaudeDesktopStartedMs() {
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snapshot == INVALID_HANDLE_VALUE) {
-        return false;
+        return 0;
     }
     PROCESSENTRY32W entry = {};
     entry.dwSize = sizeof(entry);
-    bool found = false;
+    int64_t earliest = 0;
     if (Process32FirstW(snapshot, &entry)) {
         do {
-            if (_wcsicmp(entry.szExeFile, L"claude.exe") == 0 && IsClaudeDesktopPath(ProcessImagePath(entry.th32ProcessID))) {
-                found = true;
-                break;
+            if (_wcsicmp(entry.szExeFile, L"claude.exe") != 0 || !IsClaudeDesktopPath(ProcessImagePath(entry.th32ProcessID))) {
+                continue;
+            }
+            const int64_t started = ProcessStartedMs(entry.th32ProcessID);
+            if (started > 0 && (earliest == 0 || started < earliest)) {
+                earliest = started;
             }
         } while (Process32NextW(snapshot, &entry));
     }
     CloseHandle(snapshot);
-    return found;
+    return earliest;
+}
+
+bool IsClaudeDesktopRunning() {
+    return ClaudeDesktopStartedMs() != 0;
 }
 
 HWND FindClaudeMainWindow() {

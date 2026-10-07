@@ -123,6 +123,9 @@ int RunDiagnostics() {
             out += ", completed " + Age(now, snapshot.completedMs) + " ago";
         }
         out += "\n    activity: " + Narrow(DescribeActivity(snapshot.activity)) + "\n";
+        for (const BackgroundAgent& agent : snapshot.backgroundAgents) {
+            out += "    background agent " + agent.id + " [" + agent.type + "]: " + agent.description + ", started " + Age(now, agent.startedMs) + " ago\n";
+        }
         if (!snapshot.finalText.empty()) {
             out += "    final: " + snapshot.finalText + "\n";
         }

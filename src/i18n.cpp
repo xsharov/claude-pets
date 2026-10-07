@@ -10,6 +10,7 @@ namespace {
 
 const Strings kEnglish = {
     L"Thinking",
+    L"Thinking: {}",
     L"Writing a reply",
     L"Retrying after an API error",
     L"Running a command",
@@ -20,6 +21,8 @@ const Strings kEnglish = {
     L"Searching the web: {}",
     L"Fetching {}",
     L"Agent: {}",
+    L"Background agent: {}",
+    L"Reviewing changes",
     L"Updating the plan",
     L"Using skill {}",
     L"Calling {}",
@@ -67,6 +70,7 @@ const Strings kEnglish = {
 
 const Strings kRussian = {
     L"Думает",
+    L"Думает: {}",
     L"Пишет ответ",
     L"Повтор после ошибки API",
     L"Выполняет команду",
@@ -77,6 +81,8 @@ const Strings kRussian = {
     L"Ищет в сети: {}",
     L"Загружает {}",
     L"Агент: {}",
+    L"Агент в фоне: {}",
+    L"Ревью изменений",
     L"Обновляет план",
     L"Использует скилл {}",
     L"Вызывает {}",
@@ -165,8 +171,9 @@ std::wstring DescribeActivity(const Activity& activity) {
     const std::wstring detail = Widen(activity.detail);
     switch (activity.kind) {
     case ActivityKind::None:
-    case ActivityKind::Thinking:
         return text.thinking;
+    case ActivityKind::Thinking:
+        return detail.empty() ? std::wstring(text.thinking) : Format(text.thinkingDetail, detail);
     case ActivityKind::Writing:
         return detail.empty() ? std::wstring(text.writing) : detail;
     case ActivityKind::Retrying:
@@ -185,6 +192,10 @@ std::wstring DescribeActivity(const Activity& activity) {
         return Format(text.fetching, detail);
     case ActivityKind::Agent:
         return Format(text.agent, detail);
+    case ActivityKind::BackgroundAgent:
+        return Format(text.backgroundAgent, detail);
+    case ActivityKind::Reviewing:
+        return text.reviewing;
     case ActivityKind::Todo:
         return text.updatingPlan;
     case ActivityKind::Skill:
