@@ -92,8 +92,9 @@ jobs:
       - name: Upload
         uses: actions/upload-artifact@v7
         with:
+          name: ${{ env.PACKAGE }}
           path: ${{ env.PACKAGE }}
-          archive: false
+          compression-level: 0
           if-no-files-found: error
 
   macos:
@@ -166,8 +167,9 @@ jobs:
       - name: Upload
         uses: actions/upload-artifact@v7
         with:
+          name: ${{ env.PACKAGE }}
           path: ${{ env.PACKAGE }}
-          archive: false
+          compression-level: 0
           if-no-files-found: error
 
   publish:
@@ -188,4 +190,9 @@ jobs:
         run: |
           tag="v${{ needs.version.outputs.version }}"
           ls -la dist
-          gh release create "$tag" dist/* --target "$GITHUB_SHA" --title "$tag" --generate-notes
+          packages=(dist/claude-pets-*.zip)
+          if [ "${#packages[@]}" -ne 2 ] || [ ! -f "${packages[0]}" ]; then
+            echo "Expected the Windows and macOS zips in dist, found: ${packages[*]}" >&2
+            exit 1
+          fi
+          gh release create "$tag" "${packages[@]}" --target "$GITHUB_SHA" --title "$tag" --generate-notes
