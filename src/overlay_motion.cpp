@@ -307,7 +307,7 @@ PointI Overlay::DragAnchor(PointI cursor) const {
     const float scale = layout_.scale;
     const PointI anchor = {cursor.x - static_cast<int32_t>(std::lround(grabFractionX_ * mascotWidth_ * scale)),
                            cursor.y - static_cast<int32_t>(std::lround(grabFractionY_ * MascotHeightDip() * scale))};
-    return ClampAnchor(anchor, DisplayFromPoint(cursor).work, scale);
+    return ClampAnchor(anchor, DisplayFromPoint(cursor).movable, scale);
 }
 
 Overlay::LayoutChange Overlay::StepDrag(int64_t now) {

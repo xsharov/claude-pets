@@ -41,6 +41,8 @@ DisplayInfo Describe(NSScreen* screen) {
     }
     display.id = IdOf(screen);
     display.work = FromCocoaRect(screen.visibleFrame);
+    const RectI frame = FromCocoaRect(screen.frame);
+    display.movable = RectI{frame.left, display.work.top, frame.right, frame.bottom};
     display.scale = 1.0f;
     return display;
 }

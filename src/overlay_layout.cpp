@@ -69,6 +69,7 @@ Overlay::Layout Overlay::ComputeLayout() const {
     layout.monitor = display.id;
     layout.scale = scale;
     layout.work = display.work;
+    layout.movable = display.movable;
 
     const float mascotX = static_cast<float>(anchor_.x);
     const float mascotY = static_cast<float>(anchor_.y);
@@ -359,13 +360,13 @@ RectI Overlay::DipToWindowPx(const RectF& rect) const {
     return result;
 }
 
-PointI Overlay::ClampAnchor(PointI anchor, const RectI& work, float scale) const {
+PointI Overlay::ClampAnchor(PointI anchor, const RectI& area, float scale) const {
     const int32_t width = static_cast<int32_t>(std::lround(mascotWidth_ * scale));
     const int32_t height = static_cast<int32_t>(std::lround(MascotHeightDip() * scale));
     const int32_t reserve = static_cast<int32_t>(std::lround(kBottomReserve * scale));
-    const int32_t maxX = std::max(work.left, work.right - width);
-    const int32_t maxY = std::max(work.top, work.bottom - height - reserve);
-    return PointI{std::clamp(anchor.x, work.left, maxX), std::clamp(anchor.y, work.top, maxY)};
+    const int32_t maxX = std::max(area.left, area.right - width);
+    const int32_t maxY = std::max(area.top, area.bottom - height - reserve);
+    return PointI{std::clamp(anchor.x, area.left, maxX), std::clamp(anchor.y, area.top, maxY)};
 }
 
 std::wstring Overlay::MonitorKey() const {
@@ -378,7 +379,7 @@ void Overlay::PlaceInitial(const Settings& settings) {
     if (!settings.lastMonitorKey.empty()) {
         if (const std::optional<DisplayInfo> display = FindDisplay(settings.lastMonitorKey)) {
             if (const SavedPosition* saved = FindPosition(settings, settings.lastMonitorKey)) {
-                anchor_ = ClampAnchor(saved->anchor, display->work, display->scale);
+                anchor_ = ClampAnchor(saved->anchor, display->movable, display->scale);
                 layoutValid_ = false;
                 return;
             }
@@ -399,7 +400,7 @@ void Overlay::HandleDisplayChange() {
     }
     const Layout probe = ComputeLayout();
     if (!dragging_) {
-        anchor_ = ClampAnchor(anchor_, probe.work, probe.scale);
+        anchor_ = ClampAnchor(anchor_, probe.movable, probe.scale);
     }
     frameValid_ = false;
     ApplyLayout(true);
@@ -420,7 +421,7 @@ void Overlay::SetMascotWidth(int widthDip) {
     anchor_.x += (oldWidth - newWidth) / 2;
     anchor_.y += oldHeight - newHeight;
     if (layoutValid_) {
-        anchor_ = ClampAnchor(anchor_, layout_.work, layout_.scale);
+        anchor_ = ClampAnchor(anchor_, layout_.movable, layout_.scale);
     }
     frameValid_ = false;
     ApplyLayout(true);

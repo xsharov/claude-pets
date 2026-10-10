@@ -32,6 +32,7 @@ DisplayInfo Describe(HMONITOR monitor) {
     info.cbSize = sizeof(info);
     if (GetMonitorInfoW(monitor, &info)) {
         display.work = RectI{info.rcWork.left, info.rcWork.top, info.rcWork.right, info.rcWork.bottom};
+        display.movable = display.work;
     }
     return display;
 }

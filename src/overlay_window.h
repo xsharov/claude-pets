@@ -21,6 +21,7 @@ using DisplayId = uintptr_t;
 struct DisplayInfo {
     DisplayId id = 0;
     RectI work;
+    RectI movable;
     float scale = 1.0f;
 };
 

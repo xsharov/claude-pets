@@ -72,6 +72,7 @@ private:
         DisplayId monitor = 0;
         float scale = 1.0f;
         RectI work = {};
+        RectI movable = {};
         RectI window = {};
         RectF mascot = {};
         float trayLeft = 0.0f;
@@ -147,7 +148,7 @@ private:
     void UpdateHover(const Hit& hit);
     void PollHover();
     LayoutChange MoveAnchor(PointI anchor);
-    PointI ClampAnchor(PointI anchor, const RectI& work, float scale) const;
+    PointI ClampAnchor(PointI anchor, const RectI& area, float scale) const;
     PointI DragAnchor(PointI cursor) const;
     LayoutChange StepDrag(int64_t now);
     void StartSnap(PointI cursor);
