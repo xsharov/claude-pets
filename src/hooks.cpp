@@ -53,7 +53,11 @@ struct SettingsFile {
 
 bool LoadClaudeSettings(SettingsFile& file) {
     std::string text;
-    file.existed = ReadWholeFile(ClaudeSettingsPath(), text, size_t{16} << 20);
+    const std::wstring path = ClaudeSettingsPath();
+    file.existed = FileExists(path);
+    if (file.existed && !ReadWholeFile(path, text, size_t{16} << 20)) {
+        return false;
+    }
     if (!file.existed || text.find_first_not_of(" \t\r\n") == std::string::npos) {
         file.root = Json::MakeObject();
         return true;
