@@ -3,9 +3,9 @@
 #include "desktop_sessions.h"
 #include "session_model.h"
 
-#include <windows.h>
-
 #include <atomic>
+#include <condition_variable>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -22,7 +22,7 @@ public:
     SessionMonitor(const SessionMonitor&) = delete;
     SessionMonitor& operator=(const SessionMonitor&) = delete;
 
-    void Start(HWND notifyWindow, UINT notifyMessage);
+    void Start(std::function<void()> onChanged);
     void Stop();
     void SubmitHookEvent(std::string payload);
     void MarkTurnRead(const std::string& sessionId, const std::string& turnKey);
@@ -71,10 +71,13 @@ private:
     void TrackForegroundReading(int64_t now, int64_t newestFocus);
     void Publish(std::vector<SessionView> views);
 
-    HWND notifyWindow_ = nullptr;
-    UINT notifyMessage_ = 0;
+    void Wake();
+
+    std::function<void()> onChanged_;
     std::thread thread_;
-    HANDLE wakeEvent_ = nullptr;
+    std::mutex wakeMutex_;
+    std::condition_variable wakeSignal_;
+    bool wakeRequested_ = false;
     std::atomic<bool> stop_{false};
     std::atomic<int64_t> lastHookMs_{0};
     std::atomic<int64_t> unreadBaselineMs_{0};

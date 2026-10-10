@@ -1,8 +1,16 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(ClaudePets LANGUAGES CXX RC)
+set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING "Minimum macOS version")
 
-set(CLAUDE_PETS_VERSION "" CACHE STRING "Version embedded into claude-pets.exe as major.minor.patch; empty takes the latest v* git tag")
+project(ClaudePets LANGUAGES CXX)
+
+if(WIN32)
+    enable_language(RC)
+elseif(APPLE)
+    enable_language(OBJCXX)
+endif()
+
+set(CLAUDE_PETS_VERSION "" CACHE STRING "Version embedded into the app as major.minor.patch; empty takes the latest v* git tag")
 set(PETS_VERSION "${CLAUDE_PETS_VERSION}")
 if(PETS_VERSION STREQUAL "")
     find_package(Git QUIET)
@@ -29,24 +37,24 @@ message(STATUS "claude-pets version ${PETS_VERSION}")
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_OBJCXX_STANDARD 20)
+set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
+set(CMAKE_OBJCXX_EXTENSIONS OFF)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
-add_executable(claude-pets WIN32
+set(PETS_SHARED_SOURCES
     src/animation.cpp
     src/app.cpp
-    src/claude_app.cpp
     src/desktop_sessions.cpp
     src/diagnostics.cpp
-    src/frame_clock.cpp
     src/hooks.cpp
     src/i18n.cpp
     src/json.cpp
     src/log.cpp
-    src/main.cpp
     src/monitor.cpp
     src/notices.cpp
     src/overlay.cpp
@@ -54,35 +62,99 @@ add_executable(claude-pets WIN32
     src/overlay_layout.cpp
     src/overlay_motion.cpp
     src/pets.cpp
-    src/renderer.cpp
     src/settings.cpp
-    src/system_integration.cpp
     src/transcript.cpp
     src/util.cpp
-    res/app.rc
 )
 
-target_include_directories(claude-pets PRIVATE src res "${CMAKE_CURRENT_BINARY_DIR}/generated")
+if(WIN32)
+    add_executable(claude-pets WIN32
+        ${PETS_SHARED_SOURCES}
+        src/win/claude_app_win.cpp
+        src/win/cli_win.cpp
+        src/win/frame_clock.cpp
+        src/win/main_win.cpp
+        src/win/overlay_window_win.cpp
+        src/win/platform_win.cpp
+        src/win/renderer_d2d.cpp
+        src/win/util_win.cpp
+        res/app.rc
+    )
 
-target_compile_definitions(claude-pets PRIVATE
-    UNICODE
-    _UNICODE
-    WIN32_LEAN_AND_MEAN
-    NOMINMAX
-    _WIN32_WINNT=0x0A00
-    WINVER=0x0A00
-    NTDDI_VERSION=0x0A00000B
-)
+    target_include_directories(claude-pets PRIVATE src res "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
-if(MSVC)
-    target_compile_options(claude-pets PRIVATE /W4 /permissive- /utf-8 /EHsc /Zc:__cplusplus /Zc:inline /GS /guard:cf
-        $<$<CONFIG:Release>:/O2 /Gy /Gw>)
-    target_link_options(claude-pets PRIVATE /MANIFEST:NO /GUARD:CF /DYNAMICBASE /NXCOMPAT
-        /DELAYLOAD:d2d1.dll /DELAYLOAD:dwrite.dll /DELAYLOAD:windowscodecs.dll /DELAYLOAD:shcore.dll /DELAYLOAD:dxgi.dll
-        /DELAYLOAD:shell32.dll /DELAYLOAD:ole32.dll
-        $<$<CONFIG:Release>:/OPT:REF /OPT:ICF>)
+    target_compile_definitions(claude-pets PRIVATE
+        UNICODE
+        _UNICODE
+        WIN32_LEAN_AND_MEAN
+        NOMINMAX
+        _WIN32_WINNT=0x0A00
+        WINVER=0x0A00
+        NTDDI_VERSION=0x0A00000B
+    )
+
+    if(MSVC)
+        target_compile_options(claude-pets PRIVATE /W4 /permissive- /utf-8 /EHsc /Zc:__cplusplus /Zc:inline /GS /guard:cf
+            $<$<CONFIG:Release>:/O2 /Gy /Gw>)
+        target_link_options(claude-pets PRIVATE /MANIFEST:NO /GUARD:CF /DYNAMICBASE /NXCOMPAT
+            /DELAYLOAD:d2d1.dll /DELAYLOAD:dwrite.dll /DELAYLOAD:windowscodecs.dll /DELAYLOAD:shcore.dll /DELAYLOAD:dxgi.dll
+            /DELAYLOAD:shell32.dll /DELAYLOAD:ole32.dll
+            $<$<CONFIG:Release>:/OPT:REF /OPT:ICF>)
+        target_link_libraries(claude-pets PRIVATE delayimp)
+    endif()
+
+    target_link_libraries(claude-pets PRIVATE d2d1 dwrite dxgi windowscodecs shcore shell32 ole32 user32 gdi32 advapi32)
+
+    set_target_properties(claude-pets PROPERTIES OUTPUT_NAME "claude-pets")
+elseif(APPLE)
+    set(CLAUDE_PETS_BUNDLE_ID "io.github.xsharov.claude-pets" CACHE STRING "Bundle identifier of the macOS app")
+    set(CLAUDE_PETS_CODESIGN_IDENTITY "-" CACHE STRING "codesign identity for the app bundle; - signs ad hoc, empty skips signing")
+
+    add_executable(claude-pets MACOSX_BUNDLE
+        ${PETS_SHARED_SOURCES}
+        src/mac/claude_app_mac.mm
+        src/mac/cli_mac.mm
+        src/mac/main_mac.mm
+        src/mac/overlay_window_mac.mm
+        src/mac/platform_mac.mm
+        src/mac/renderer_cg.mm
+        src/mac/util_mac.mm
+        res/app.icns
+    )
+
+    set_source_files_properties(res/app.icns PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+
+    target_include_directories(claude-pets PRIVATE src res "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
+    target_compile_options(claude-pets PRIVATE -Wall -Wextra -Wno-unused-parameter
+        $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
+
+    target_link_libraries(claude-pets PRIVATE
+        "-framework AppKit"
+        "-framework ApplicationServices"
+        "-framework Carbon"
+        "-framework CoreFoundation"
+        "-framework CoreGraphics"
+        "-framework CoreText"
+        "-framework ImageIO"
+        "-framework QuartzCore"
+        "-framework ServiceManagement"
+    )
+
+    set_target_properties(claude-pets PROPERTIES
+        OUTPUT_NAME "ClaudePets"
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/res/Info.plist.in"
+        MACOSX_BUNDLE_BUNDLE_NAME "Claude Pets"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "${CLAUDE_PETS_BUNDLE_ID}"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${PETS_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PETS_VERSION}"
+        MACOSX_BUNDLE_ICON_FILE "app.icns"
+        MACOSX_BUNDLE_COPYRIGHT "MIT License"
+    )
+
+    if(NOT CLAUDE_PETS_CODESIGN_IDENTITY STREQUAL "")
+        add_custom_command(TARGET claude-pets POST_BUILD
+            COMMAND codesign --force --sign "${CLAUDE_PETS_CODESIGN_IDENTITY}" "$<TARGET_BUNDLE_DIR:claude-pets>"
+            VERBATIM)
+    endif()
 endif()
-
-target_link_libraries(claude-pets PRIVATE d2d1 dwrite dxgi windowscodecs shcore shell32 ole32 user32 gdi32 advapi32 delayimp)
-
-set_target_properties(claude-pets PROPERTIES OUTPUT_NAME "claude-pets")

@@ -2,6 +2,7 @@
 
 #include "log.h"
 #include "util.h"
+#include "win/win_util.h"
 
 #include <shellapi.h>
 #include <shlobj.h>
@@ -15,6 +16,21 @@
 namespace cp {
 
 namespace {
+
+bool IsClaudeDesktopPath(const std::wstring& imagePath) {
+    if (imagePath.empty()) {
+        return false;
+    }
+    const std::wstring lower = ToLower(imagePath);
+    if (FileNameOf(std::wstring_view(lower)) != L"claude.exe") {
+        return false;
+    }
+    if (lower.find(L"\\claude-code\\") != std::wstring::npos || lower.find(L"\\.local\\") != std::wstring::npos) {
+        return false;
+    }
+    return lower.find(L"\\windowsapps\\claude_") != std::wstring::npos || lower.find(L"\\anthropicclaude\\") != std::wstring::npos ||
+           lower.find(L"\\programs\\claude\\") != std::wstring::npos || lower.find(L"\\claude\\app\\") != std::wstring::npos;
+}
 
 std::wstring ProcessImagePath(DWORD processId) {
     static std::mutex cacheLock;
@@ -154,21 +170,24 @@ bool ForceForeground(HWND window) {
     return result;
 }
 
+HWND FindClaudeMainWindow() {
+    WindowSearch search;
+    EnumWindows(CollectClaudeWindow, reinterpret_cast<LPARAM>(&search));
+    return search.best;
 }
 
-bool IsClaudeDesktopPath(const std::wstring& imagePath) {
-    if (imagePath.empty()) {
-        return false;
+}
+
+std::vector<std::wstring> ClaudeDesktopDataDirectories() {
+    std::vector<std::wstring> directories;
+    directories.push_back(JoinPath(KnownFolderPath(FOLDERID_RoamingAppData), L"Claude"));
+    const std::wstring packages = JoinPath(KnownFolderPath(FOLDERID_LocalAppData), L"Packages");
+    for (const std::wstring& package : ListDirectories(packages)) {
+        if (StartsWith(ToLower(package), L"claude_")) {
+            directories.push_back(JoinPath(JoinPath(packages, package), L"LocalCache\\Roaming\\Claude"));
+        }
     }
-    const std::wstring lower = ToLower(imagePath);
-    if (FileNameOf(std::wstring_view(lower)) != L"claude.exe") {
-        return false;
-    }
-    if (lower.find(L"\\claude-code\\") != std::wstring::npos || lower.find(L"\\.local\\") != std::wstring::npos) {
-        return false;
-    }
-    return lower.find(L"\\windowsapps\\claude_") != std::wstring::npos || lower.find(L"\\anthropicclaude\\") != std::wstring::npos ||
-           lower.find(L"\\programs\\claude\\") != std::wstring::npos || lower.find(L"\\claude\\app\\") != std::wstring::npos;
+    return directories;
 }
 
 int64_t ClaudeDesktopStartedMs() {
@@ -196,12 +215,6 @@ int64_t ClaudeDesktopStartedMs() {
 
 bool IsClaudeDesktopRunning() {
     return ClaudeDesktopStartedMs() != 0;
-}
-
-HWND FindClaudeMainWindow() {
-    WindowSearch search;
-    EnumWindows(CollectClaudeWindow, reinterpret_cast<LPARAM>(&search));
-    return search.best;
 }
 
 bool IsClaudeForeground() {

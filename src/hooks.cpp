@@ -219,7 +219,7 @@ bool InstallHooks(const std::wstring& executable) {
     if (file.existed) {
         const std::wstring backup = ClaudeSettingsPath() + L".claude-pets.bak";
         if (!FileExists(backup)) {
-            CopyFileW(ClaudeSettingsPath().c_str(), backup.c_str(), TRUE);
+            CopyFileIfMissing(ClaudeSettingsPath(), backup);
         }
     }
     RemoveOurHooks(root);
@@ -252,37 +252,15 @@ bool UninstallHooks() {
 }
 
 int RunHookRelay() {
-    const HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
-    if (input == nullptr || input == INVALID_HANDLE_VALUE) {
-        return 0;
-    }
     std::string payload;
-    char buffer[16384];
-    for (;;) {
-        DWORD read = 0;
-        if (!ReadFile(input, buffer, sizeof(buffer), &read, nullptr) || read == 0) {
-            break;
-        }
-        payload.append(buffer, read);
-        if (payload.size() > kMaxPayload) {
-            return 0;
-        }
+    if (!ReadHookInput(payload, kMaxPayload)) {
+        return 0;
     }
     Json parsed;
     if (!ParseJson(payload, parsed) || !parsed.isObject()) {
         return 0;
     }
-    const HWND target = FindWindowW(L"ClaudePetsOverlay", nullptr);
-    if (target == nullptr) {
-        return 0;
-    }
-    std::string message = MinimizePayload(parsed);
-    COPYDATASTRUCT data = {};
-    data.dwData = kHookCopyDataId;
-    data.cbData = static_cast<DWORD>(message.size());
-    data.lpData = message.data();
-    DWORD_PTR result = 0;
-    SendMessageTimeoutW(target, WM_COPYDATA, 0, reinterpret_cast<LPARAM>(&data), SMTO_ABORTIFHUNG, 2000, &result);
+    DeliverHookEvent(MinimizePayload(parsed));
     return 0;
 }
 

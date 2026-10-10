@@ -6,6 +6,7 @@
 #include "util.h"
 
 #include <algorithm>
+#include <chrono>
 
 namespace cp {
 
@@ -117,23 +118,17 @@ int64_t NewestModifiedUnder(const std::wstring& directory, int depth) {
 
 }
 
-SessionMonitor::SessionMonitor() {
-    wakeEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-}
+SessionMonitor::SessionMonitor() = default;
 
 SessionMonitor::~SessionMonitor() {
     Stop();
-    if (wakeEvent_ != nullptr) {
-        CloseHandle(wakeEvent_);
-    }
 }
 
-void SessionMonitor::Start(HWND notifyWindow, UINT notifyMessage) {
+void SessionMonitor::Start(std::function<void()> onChanged) {
     if (thread_.joinable()) {
         return;
     }
-    notifyWindow_ = notifyWindow;
-    notifyMessage_ = notifyMessage;
+    onChanged_ = std::move(onChanged);
     stop_ = false;
     thread_ = std::thread([this] { Run(); });
 }
@@ -143,8 +138,16 @@ void SessionMonitor::Stop() {
         return;
     }
     stop_ = true;
-    SetEvent(wakeEvent_);
+    Wake();
     thread_.join();
+}
+
+void SessionMonitor::Wake() {
+    {
+        std::lock_guard<std::mutex> lock(wakeMutex_);
+        wakeRequested_ = true;
+    }
+    wakeSignal_.notify_one();
 }
 
 void SessionMonitor::SubmitHookEvent(std::string payload) {
@@ -155,7 +158,7 @@ void SessionMonitor::SubmitHookEvent(std::string payload) {
         }
     }
     lastHookMs_ = UnixNowMs();
-    SetEvent(wakeEvent_);
+    Wake();
 }
 
 void SessionMonitor::MarkTurnRead(const std::string& sessionId, const std::string& turnKey) {
@@ -163,7 +166,7 @@ void SessionMonitor::MarkTurnRead(const std::string& sessionId, const std::strin
         std::lock_guard<std::mutex> lock(mutex_);
         readQueue_.emplace_back(sessionId, turnKey);
     }
-    SetEvent(wakeEvent_);
+    Wake();
 }
 
 std::vector<SessionView> SessionMonitor::Snapshot() const {
@@ -187,7 +190,9 @@ void SessionMonitor::Run() {
         if (spent > 150 && LogEnabled()) {
             LogLine("slow cycle " + std::to_string(spent) + " ms");
         }
-        WaitForSingleObject(wakeEvent_, static_cast<DWORD>(kCycleMs));
+        std::unique_lock<std::mutex> lock(wakeMutex_);
+        wakeSignal_.wait_for(lock, std::chrono::milliseconds(kCycleMs), [this] { return wakeRequested_; });
+        wakeRequested_ = false;
     }
 }
 
@@ -310,14 +315,15 @@ void SessionMonitor::RefreshBackgroundAgents(Tracked& tracked, int64_t now) {
     for (const BackgroundAgent& pendingAgent : pending) {
         BackgroundAgent agent = pendingAgent;
         const bool workflow = !agent.workflowRunId.empty();
-        const std::wstring stem = sessionDirectory.empty() || workflow ? std::wstring() : JoinPath(sessionDirectory, L"subagents\\agent-" + Widen(agent.id));
+        const std::wstring subagents = sessionDirectory.empty() ? std::wstring() : JoinPath(sessionDirectory, L"subagents");
+        const std::wstring stem = subagents.empty() || workflow ? std::wstring() : JoinPath(subagents, L"agent-" + Widen(agent.id));
         int64_t lastSignal = agent.startedMs;
         FileStamp stamp;
         if (!stem.empty() && StatFile(stem + L".jsonl", stamp)) {
             lastSignal = std::max(lastSignal, stamp.modifiedMs);
         }
         if (workflow && !sessionDirectory.empty()) {
-            lastSignal = std::max(lastSignal, NewestModifiedUnder(JoinPath(sessionDirectory, L"subagents\\workflows\\" + Widen(agent.workflowRunId)), 0));
+            lastSignal = std::max(lastSignal, NewestModifiedUnder(JoinPath(JoinPath(subagents, L"workflows"), Widen(agent.workflowRunId)), 0));
         }
         if (lastSignal < claudeStartedMs_ || now - lastSignal > kRunningStaleMs) {
             continue;
@@ -590,8 +596,8 @@ void SessionMonitor::Publish(std::vector<SessionView> views) {
         }
         snapshot_ = std::move(views);
     }
-    if (notifyWindow_ != nullptr) {
-        PostMessageW(notifyWindow_, notifyMessage_, 0, 0);
+    if (onChanged_) {
+        onChanged_();
     }
 }
 

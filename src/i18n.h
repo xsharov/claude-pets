@@ -49,7 +49,7 @@ struct Strings {
     const wchar_t* menuOpenClaude;
     const wchar_t* menuOpenPetsFolder;
     const wchar_t* menuPetsFolder;
-    const wchar_t* menuStartWithWindows;
+    const wchar_t* menuAutostart;
     const wchar_t* menuHooks;
     const wchar_t* menuLanguage;
     const wchar_t* menuHide;
@@ -66,6 +66,8 @@ struct Strings {
     const wchar_t* hooksFailed;
     const wchar_t* codecMissing;
     const wchar_t* spriteFailed;
+    const wchar_t* appTranslocated;
+    const wchar_t* autostartFailed;
 };
 
 void SetLanguage(Language language);
