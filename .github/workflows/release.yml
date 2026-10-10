@@ -78,7 +78,7 @@ jobs:
         shell: pwsh
         run: |
           $package = "claude-pets-${{ steps.version.outputs.version }}-win-x64.zip"
-          Compress-Archive -Path build/release/claude-pets.exe, README.md, LICENSE -DestinationPath $package
+          Compress-Archive -Path build/release/claude-pets.exe, README.md, README.ru.md, LICENSE -DestinationPath $package
           "PACKAGE=$package" >> $env:GITHUB_ENV
 
       - name: Publish

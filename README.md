@@ -1,117 +1,123 @@
 # Claude Pets
 
-Аналог системы Pets/Mini из Codex теперь доступен в Claude Code desktop на Windows,
-Он полностью дублирует функционал оригинала, но работает экстремально быстрее за счет реализации на c++. 
+**English** · [Русский](README.ru.md)
 
-Все питомцы используют формат Codex pets v2, поэтому подходят готовые из `~/.codex/pets`. 
+The Pets/Mini feature from Codex, now in Claude Code desktop on Windows.
+It does everything the original does, but runs dramatically faster because it is written in C++.
 
-## Что умеет
+All pets use the Codex pets v2 format, so the ones you already have in `~/.codex/pets` work as is.
 
-- Показывает d баблах сессий Claude desktop статус треда.
-- Открывает сессию в Claude по клику на бабл.
-- Меняет анимацию питомца: работа, ожидание, ошибка, готово.
-- Перетаскивается мышью. Если отпустить питомца с зажатым Alt, он прилипнет к углу или середине края экрана.
-- Поворачивает голову к курсору, если у питомца есть кадры взгляда.
-- Разворачивает стопку баблов при наведении и прячет её в счётчик по кнопке.
-- Прячется в трей по `Ctrl+Alt+P`.
-- Подстраивается под светлую или тёмную тему Windows.
+![The pet shows a session error in a bubble](docs/pet-status.gif)
 
-## Почему он лёгкий
+## What it does
 
-- Написан на C++20 и Win32 API с Direct2D, без Electron, браузера и .NET. Весь питомец — один exe примерно на 750 КБ, Visual C++ Redistributable не нужен.
-- Занимает 20–30 МБ памяти.
-- Перерисовывает только то, что изменилось: кадр питомца, кнопку или мерцающую строку, а не всё окно.
-- Поддерживает разные герцовки монитора.
-- Хуки Claude Code запускаются асинхронно и без оболочки, поэтому Claude их не ждёт.
-- Проверен на утечки.
+- Shows the status of each Claude desktop session in a bubble.
+- Opens the session in Claude when you click its bubble.
+- Switches the pet's animation: working, waiting, error, done.
+- Can be dragged with the mouse. Release the pet while holding Alt and it snaps to a corner or to the middle of a screen edge.
+- Turns its head toward the cursor if the pet has look frames.
+- Expands the bubble stack on hover and tucks it into a counter with a button.
+- Hides in the tray with `Ctrl+Alt+P`.
+- Follows the Windows light or dark theme.
 
-## Установка
+## Why it is lightweight
 
-Нужны Windows 10 или 11 x64 и Claude desktop с сессиями во вкладке **Code**.
+- Written in C++20 and the Win32 API with Direct2D: no Electron, no browser, no .NET. The whole pet is a single exe of about 750 KB, and it does not need the Visual C++ Redistributable.
+- Uses 20–30 MB of memory.
+- Redraws only what changed — a pet frame, a button or a shimmering line — instead of the whole window.
+- Supports monitors with different refresh rates.
+- Claude Code hooks run asynchronously and without a shell, so Claude never waits for them.
+- Tested for leaks.
 
-1. Скачать `claude-pets-<версия>-win-x64.zip` со страницы **Releases**.
-2. Распаковать архив в постоянную папку, например `%LOCALAPPDATA%\Programs\ClaudePets`. Автозапуск хранит полный путь к exe, поэтому папку лучше потом не переносить.
-3. Запустить `claude-pets.exe`.
+![The bubble stack expands on hover](docs/pet-bubbles.gif)
 
-Питомец появится в правом нижнем углу основного монитора. При первом запуске программа берёт питомца и размер, выбранные в Codex, если он установлен.
+## Installation
 
-## Питомцы
+Requires Windows 10 or 11 x64 and Claude desktop with sessions in the **Code** tab.
 
-Питомцы лежат в одной из двух папок:
+1. Download `claude-pets-<version>-win-x64.zip` from the **Releases** page.
+2. Extract the archive to a permanent folder, for example `%LOCALAPPDATA%\Programs\ClaudePets`. Autostart stores the full path to the exe, so it is best not to move the folder afterwards.
+3. Run `claude-pets.exe`.
 
-- `%USERPROFILE%\.claude\pets\<имя>\`;
-- `%USERPROFILE%\.codex\pets\<имя>\` — сюда своих питомцев ставит Codex.
+The pet appears in the bottom-right corner of the primary monitor. On first launch it takes the pet and size chosen in Codex, if Codex is installed.
 
-Папка выбирается в контекстном меню питомца: **Папка с питомцами**. По умолчанию используется `.claude\pets`, а если там пусто — `.codex\pets`.
+## Pets
 
-Чтобы перенести питомца из Codex, нужно скопировать его папку из `.codex\pets` в `.claude\pets`.
+Pets live in one of two folders:
 
-## Как пользоваться
+- `%USERPROFILE%\.claude\pets\<name>\`;
+- `%USERPROFILE%\.codex\pets\<name>\` — this is where Codex installs its pets.
 
-| Действие | Результат |
+Pick the folder in the pet's context menu: **Pets folder**. By default the pet uses `.claude\pets`, and `.codex\pets` if that one is empty.
+
+To bring a pet over from Codex, copy its folder from `.codex\pets` to `.claude\pets`.
+
+## Usage
+
+| Action | Result |
 |---|---|
-| Клик по баблу | Сессия открывается в Claude |
-| Навести курсор на стопку | Стопка разворачивается, видно до четырёх баблов; колесо мыши листает остальные |
-| Клик по **×** на бабле | Бабл скрывается до следующего хода этой сессии |
-| ПКМ по баблу | Меню бабла: открыть сессию, скрыть уведомление, не уведомлять об этой сессии |
-| Круглая кнопка на краю бабла | Со стрелкой прячет баблы в счётчик у питомца, с числом сворачивает развёрнутую стопку |
-| Клик по счётчику у питомца | Баблы возвращаются |
-| Клик по питомцу | Окно Claude выходит на передний план |
-| Перетащить питомца | Питомец переезжает, позиция запоминается для каждого монитора |
-| Отпустить питомца с зажатым Alt | Питомец прилипает к углу или середине края экрана |
-| ПКМ по питомцу | Меню: питомец, размер, папка с питомцами, язык, автозапуск и остальные настройки |
-| `Ctrl+Alt+P` | Питомец прячется в трей или возвращается |
+| Click a bubble | The session opens in Claude |
+| Hover over the stack | The stack expands to show up to four bubbles; the mouse wheel scrolls through the rest |
+| Click **×** on a bubble | The bubble hides until that session's next turn |
+| Right-click a bubble | Bubble menu: **Open session**, **Dismiss**, **Mute this session** |
+| Round button on the edge of a bubble | With an arrow, tucks the bubbles into a counter next to the pet; with a number, collapses the expanded stack |
+| Click the counter next to the pet | The bubbles come back |
+| Click the pet | The Claude window comes to the front |
+| Drag the pet | The pet moves; its position is remembered for each monitor |
+| Release the pet while holding Alt | The pet snaps to a corner or to the middle of a screen edge |
+| Right-click the pet | Menu: pet, size, pets folder, language, start with Windows and other settings |
+| `Ctrl+Alt+P` | The pet hides in the tray or comes back |
 
-Баблы бывают четырёх видов:
+There are four kinds of bubbles:
 
-| Бабл | Когда появляется |
+| Bubble | When it appears |
 |---|---|
-| Работает, текст мерцает | Идёт ход сессии |
-| Ждёт ввода, оранжевый **!** | Claude задал вопрос, ждёт решения по плану или разрешения на инструмент |
-| Готово, зелёная галочка | Ход закончился, а сессию ещё не открывали |
-| Ошибка, красный **!** | Ход оборвался ошибкой API |
+| Working, shimmering text | A session turn is in progress |
+| Waiting for input, orange **!** | Claude asked a question, or is waiting for a decision on a plan or for permission to use a tool |
+| Done, green check mark | The turn has finished and you have not opened the session yet |
+| Error, red **!** | The turn stopped with an API error |
 
-## Точный статус через хуки
+## Precise status with hooks
 
-Без хуков питомец не видит запрос разрешения на инструмент. Хуки Claude Code сообщают питомцу о таких событиях сразу.
+Without hooks the pet cannot see tool permission requests. Claude Code hooks tell the pet about such events right away.
 
-1. Открыть контекстное меню питомца.
-2. Выбрать **Точный статус (хуки Claude Code)** и подтвердить установку.
+1. Open the pet's context menu.
+2. Choose **Precise status (Claude Code hooks)** and confirm the installation.
 
-Тот же пункт меню удаляет хуки. Из командной строки — `claude-pets.exe --install-hooks` и `claude-pets.exe --uninstall-hooks`.
+The same menu item removes the hooks. From the command line, use `claude-pets.exe --install-hooks` and `claude-pets.exe --uninstall-hooks`.
 
-Хуки добавляются в `%USERPROFILE%\.claude\settings.json`. Существующие хуки остаются на месте, перед первой установкой рядом создаётся копия `settings.json.claude-pets.bak`. Если перенести exe, путь в хуках обновится при следующем запуске питомца.
+The hooks are added to `%USERPROFILE%\.claude\settings.json`. Existing hooks stay in place, and before the first installation a backup `settings.json.claude-pets.bak` is created next to the file. If you move the exe, the path in the hooks is updated the next time the pet starts.
 
-**Важно:** хуки хранят путь к `claude-pets.exe`. Перед удалением программы снять хуки через меню или `--uninstall-hooks`, иначе в настройках Claude Code останутся команды, которые указывают на несуществующий файл.
+**Important:** the hooks store the path to `claude-pets.exe`. Before you uninstall the app, remove the hooks from the menu or with `--uninstall-hooks`. Otherwise the Claude Code settings keep commands that point to a file that no longer exists.
 
-## Настройки
+## Settings
 
-Настройки лежат в `%APPDATA%\ClaudePets\settings.json`. Почти всё меняется из контекстного меню, вручную полезны эти поля:
+Settings are stored in `%APPDATA%\ClaudePets\settings.json`. Almost everything can be changed from the context menu; these fields are worth editing by hand:
 
-| Поле | Значения |
+| Field | Values |
 |---|---|
-| `hotkey` | Сочетание вида `Ctrl+Alt+P` или `Win+Alt+Space`; пустая строка отключает |
+| `hotkey` | A shortcut such as `Ctrl+Alt+P` or `Win+Alt+Space`; an empty string turns it off |
 | `theme` | `auto`, `light`, `dark` |
 | `language` | `auto`, `en`, `ru` |
 | `petsFolder` | `auto`, `claude`, `codex` |
-| `mascotWidth` | Ширина питомца от 80 до 224 |
+| `mascotWidth` | Pet width from 80 to 224 |
 
-Файл нужно править при закрытом питомце: запущенная программа перезаписывает его своими значениями.
+Edit the file only while the pet is closed: the running app overwrites it with its own values.
 
-## Сборка из исходников
+## Building from source
 
-Нужна Visual Studio 2022 или Build Tools 2022 с компонентом MSVC x64. CMake и Ninja берутся из поставки Visual Studio.
+Requires Visual Studio 2022 or Build Tools 2022 with the MSVC x64 component. CMake and Ninja come with Visual Studio.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File build.ps1
 ```
 
-Готовый файл появится в `build\release\claude-pets.exe`.
+The executable is written to `build\release\claude-pets.exe`.
 
-- `-Configuration Debug` собирает отладочную версию.
-- `-Clean` собирает с нуля.
-- `-Version 1.2.3` вшивает версию. Без параметра берётся последний тег `v*`.
+- `-Configuration Debug` builds a debug version.
+- `-Clean` builds from scratch.
+- `-Version 1.2.3` embeds the version. Without it, the latest `v*` tag is used.
 
-## Лицензия
+## License
 
-MIT, текст лицензии в [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).
