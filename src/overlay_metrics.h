@@ -1,6 +1,6 @@
 #pragma once
 
-#include <windows.h>
+#include <cstdint>
 
 namespace cp::metrics {
 
@@ -34,11 +34,11 @@ inline constexpr double kMaxFrameStepMs = 50.0;
 inline constexpr int kDragThresholdPx = 4;
 inline constexpr int kMinMascotWidth = 80;
 inline constexpr int kMaxMascotWidth = 224;
-inline constexpr UINT_PTR kAnimationTimer = 1;
-inline constexpr UINT_PTR kCollapseTimer = 2;
-inline constexpr UINT kCollapseDelayMs = 450;
-inline constexpr UINT kFrameMessage = WM_APP + 32;
+inline constexpr uint32_t kAnimationTimer = 1;
+inline constexpr uint32_t kCollapseTimer = 2;
+inline constexpr uint32_t kCollapseDelayMs = 450;
 inline constexpr int64_t kFrameWatchdogMs = 100;
+inline constexpr int64_t kMinTimerDelayMs = 10;
 inline constexpr int64_t kShimmerIntervalMs = 60;
 inline constexpr int64_t kShimmerCycleMs = 2200;
 inline constexpr int64_t kShimmerSweepMs = 1600;

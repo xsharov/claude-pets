@@ -19,8 +19,11 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
-    runs-on: windows-latest
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.version.outputs.skip }}
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -68,24 +71,121 @@ jobs:
           "skip=false" >> $env:GITHUB_OUTPUT
           "version=$next" >> $env:GITHUB_OUTPUT
 
+  windows:
+    needs: version
+    if: needs.version.outputs.skip == 'false'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
       - name: Build
-        if: steps.version.outputs.skip == 'false'
         shell: pwsh
-        run: ./build.ps1 -Version ${{ steps.version.outputs.version }}
+        run: ./build.ps1 -Version ${{ needs.version.outputs.version }}
 
       - name: Package
-        if: steps.version.outputs.skip == 'false'
         shell: pwsh
         run: |
-          $package = "claude-pets-${{ steps.version.outputs.version }}-win-x64.zip"
+          $package = "claude-pets-${{ needs.version.outputs.version }}-win-x64.zip"
           Compress-Archive -Path build/release/claude-pets.exe, README.md, README.ru.md, LICENSE -DestinationPath $package
           "PACKAGE=$package" >> $env:GITHUB_ENV
 
+      - name: Upload
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ env.PACKAGE }}
+          archive: false
+          if-no-files-found: error
+
+  macos:
+    needs: version
+    if: needs.version.outputs.skip == 'false'
+    runs-on: macos-26
+    env:
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build
+        run: ./build.sh --version ${{ needs.version.outputs.version }}
+
+      - name: Check
+        run: |
+          app=build/release/ClaudePets.app
+          "$app/Contents/MacOS/ClaudePets" --version
+          "$app/Contents/MacOS/ClaudePets" --diagnose
+          codesign --verify --strict --verbose=2 "$app"
+
+      - name: Sign with Developer ID
+        if: env.MACOS_CERTIFICATE != '' && env.MACOS_SIGNING_IDENTITY != ''
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password="$(uuidgen)"
+          echo -n "$MACOS_CERTIFICATE" | base64 --decode -o "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/certificate.p12" -P "$MACOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -k "$keychain_password" "$keychain"
+          keychains=("$keychain")
+          while IFS= read -r line; do
+            keychains+=("$(printf '%s' "$line" | sed -e 's/^[[:space:]]*"//' -e 's/"[[:space:]]*$//')")
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "${keychains[@]}"
+          rm -f "$RUNNER_TEMP/certificate.p12"
+          codesign --force --options runtime --timestamp --sign "$MACOS_SIGNING_IDENTITY" build/release/ClaudePets.app
+          codesign --verify --strict --verbose=2 build/release/ClaudePets.app
+
+      - name: Notarize
+        if: env.MACOS_CERTIFICATE != '' && env.MACOS_SIGNING_IDENTITY != '' && env.APPLE_ID != '' && env.APPLE_TEAM_ID != '' && env.APPLE_APP_PASSWORD != ''
+        run: |
+          ditto -c -k --keepParent build/release/ClaudePets.app "$RUNNER_TEMP/notarize.zip"
+          result="$(xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait --output-format json)"
+          echo "$result"
+          status="$(echo "$result" | jq -r .status)"
+          if [ "$status" != "Accepted" ]; then
+            xcrun notarytool log "$(echo "$result" | jq -r .id)" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" || true
+            exit 1
+          fi
+          xcrun stapler staple build/release/ClaudePets.app
+          xcrun stapler validate build/release/ClaudePets.app
+
+      - name: Package
+        run: |
+          package="claude-pets-${{ needs.version.outputs.version }}-macos-arm64.zip"
+          mkdir -p "$RUNNER_TEMP/package"
+          ditto build/release/ClaudePets.app "$RUNNER_TEMP/package/ClaudePets.app"
+          cp README.md README.ru.md LICENSE "$RUNNER_TEMP/package/"
+          ditto -c -k --norsrc "$RUNNER_TEMP/package" "$package"
+          echo "PACKAGE=$package" >> "$GITHUB_ENV"
+
+      - name: Upload
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ env.PACKAGE }}
+          archive: false
+          if-no-files-found: error
+
+  publish:
+    needs: [version, windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download
+        uses: actions/download-artifact@v8
+        with:
+          pattern: claude-pets-*
+          merge-multiple: true
+          path: dist
+
       - name: Publish
-        if: steps.version.outputs.skip == 'false'
-        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          $tag = "v${{ steps.version.outputs.version }}"
-          gh release create $tag $env:PACKAGE --target $env:GITHUB_SHA --title $tag --generate-notes
+          tag="v${{ needs.version.outputs.version }}"
+          ls -la dist
+          gh release create "$tag" dist/* --target "$GITHUB_SHA" --title "$tag" --generate-notes

@@ -3,8 +3,6 @@
 #include "overlay_metrics.h"
 #include "util.h"
 
-#include <shellscalingapi.h>
-
 #include <algorithm>
 #include <cmath>
 
@@ -14,50 +12,16 @@ using namespace metrics;
 
 namespace {
 
-float MonitorScale(HMONITOR monitor) {
-    UINT dpiX = 96;
-    UINT dpiY = 96;
-    if (FAILED(GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &dpiX, &dpiY)) || dpiX == 0) {
-        dpiX = 96;
-    }
-    return static_cast<float>(dpiX) / 96.0f;
-}
-
-std::wstring KeyForMonitor(HMONITOR monitor) {
-    MONITORINFOEXW info = {};
-    info.cbSize = sizeof(info);
-    if (!GetMonitorInfoW(monitor, &info)) {
-        return {};
-    }
-    const RECT& r = info.rcMonitor;
-    return std::wstring(info.szDevice) + L"@" + std::to_wstring(r.left) + L"," + std::to_wstring(r.top) + L"," + std::to_wstring(r.right) + L"," +
-           std::to_wstring(r.bottom);
-}
-
-D2D1_RECT_F Shift(const D2D1_RECT_F& rect, float dx, float dy) {
-    return D2D1::RectF(rect.left + dx, rect.top + dy, rect.right + dx, rect.bottom + dy);
+RectF Shift(const RectF& rect, float dx, float dy) {
+    return RectF{rect.left + dx, rect.top + dy, rect.right + dx, rect.bottom + dy};
 }
 
 bool Near(float a, float b) {
     return std::fabs(a - b) < 0.01f;
 }
 
-bool SameRect(const D2D1_RECT_F& a, const D2D1_RECT_F& b) {
+bool SameRect(const RectF& a, const RectF& b) {
     return Near(a.left, b.left) && Near(a.top, b.top) && Near(a.right, b.right) && Near(a.bottom, b.bottom);
-}
-
-struct MonitorSearch {
-    std::wstring key;
-    HMONITOR found = nullptr;
-};
-
-BOOL CALLBACK FindMonitorByKey(HMONITOR monitor, HDC, LPRECT, LPARAM parameter) {
-    auto* search = reinterpret_cast<MonitorSearch*>(parameter);
-    if (KeyForMonitor(monitor) == search->key) {
-        search->found = monitor;
-        return FALSE;
-    }
-    return TRUE;
 }
 
 }
@@ -93,27 +57,25 @@ void Overlay::SetExpanded(bool expanded) {
 
 Overlay::Layout Overlay::ComputeLayout() const {
     Layout layout;
-    HMONITOR monitor = MonitorFromPoint(POINT{anchor_.x + 1, anchor_.y + 1}, MONITOR_DEFAULTTONEAREST);
-    float scale = MonitorScale(monitor);
+    DisplayInfo display = DisplayFromPoint(PointI{anchor_.x + 1, anchor_.y + 1});
+    float scale = display.scale;
     const float mascotHeight = MascotHeightDip();
-    const POINT center = {anchor_.x + static_cast<LONG>(mascotWidth_ * scale * 0.5f), anchor_.y + static_cast<LONG>(mascotHeight * scale * 0.5f)};
-    const HMONITOR centerMonitor = MonitorFromPoint(center, MONITOR_DEFAULTTONEAREST);
-    if (centerMonitor != monitor) {
-        monitor = centerMonitor;
-        scale = MonitorScale(monitor);
+    const PointI center = {anchor_.x + static_cast<int32_t>(mascotWidth_ * scale * 0.5f), anchor_.y + static_cast<int32_t>(mascotHeight * scale * 0.5f)};
+    DisplayInfo centerDisplay = DisplayFromPoint(center);
+    if (centerDisplay.id != display.id) {
+        display = std::move(centerDisplay);
+        scale = display.scale;
     }
-    MONITORINFO info = {};
-    info.cbSize = sizeof(info);
-    GetMonitorInfoW(monitor, &info);
-    layout.monitor = monitor;
+    layout.monitor = display.id;
     layout.scale = scale;
-    layout.work = info.rcWork;
+    layout.work = display.work;
+    layout.movable = display.movable;
 
     const float mascotX = static_cast<float>(anchor_.x);
     const float mascotY = static_cast<float>(anchor_.y);
     const float mascotW = mascotWidth_ * scale;
     const float mascotH = mascotHeight * scale;
-    const RECT& work = layout.work;
+    const RectI& work = layout.work;
 
     int visiblePills = 0;
     for (const PillState& pill : pills_) {
@@ -154,15 +116,15 @@ Overlay::Layout Overlay::ComputeLayout() const {
         bottom = std::max(bottom, trayAbove ? trayTop + trayHeight : trayTop + trayHeight + slackY);
     }
     const float margin = kWindowMargin * scale;
-    layout.window.left = static_cast<LONG>(std::floor(left - margin));
-    layout.window.top = static_cast<LONG>(std::floor(top - margin));
-    layout.window.right = static_cast<LONG>(std::ceil(right + margin));
-    layout.window.bottom = static_cast<LONG>(std::ceil(bottom + margin));
+    layout.window.left = static_cast<int32_t>(std::floor(left - margin));
+    layout.window.top = static_cast<int32_t>(std::floor(top - margin));
+    layout.window.right = static_cast<int32_t>(std::ceil(right + margin));
+    layout.window.bottom = static_cast<int32_t>(std::ceil(bottom + margin));
 
     const float originX = static_cast<float>(layout.window.left);
     const float originY = static_cast<float>(layout.window.top);
-    layout.mascot = D2D1::RectF((mascotX - originX) / scale, (mascotY - originY) / scale, (mascotX - originX) / scale + mascotWidth_,
-                                (mascotY - originY) / scale + mascotHeight);
+    layout.mascot = RectF{(mascotX - originX) / scale, (mascotY - originY) / scale, (mascotX - originX) / scale + mascotWidth_,
+                          (mascotY - originY) / scale + mascotHeight};
     layout.trayLeft = (trayX - originX) / scale;
     layout.trayWidth = trayWidth / scale;
     layout.trayNearEdge = (nearEdge - originY) / scale;
@@ -172,7 +134,7 @@ Overlay::Layout Overlay::ComputeLayout() const {
 
 Overlay::LayoutChange Overlay::Relayout() {
     const Layout next = ComputeLayout();
-    frameClock_.SetMonitor(next.monitor);
+    window_.SetFrameClockDisplay(next.monitor);
     if (!layoutValid_) {
         layout_ = next;
         layoutValid_ = true;
@@ -210,7 +172,7 @@ Overlay::LayoutChange Overlay::Relayout() {
                          layout_.window.bottom - layout_.window.top != next.window.bottom - next.window.top;
     const bool moved = layout_.window.left != next.window.left || layout_.window.top != next.window.top;
     const bool reshaped = resized || !SameRect(layout_.mascot, next.mascot) || !Near(layout_.trayLeft, next.trayLeft) || !Near(layout_.trayNearEdge, next.trayNearEdge);
-    const D2D1_POINT_2F lagBefore = lag_;
+    const PointF lagBefore = lag_;
     layout_ = next;
     UpdatePillTargets();
     if (trayDx != 0.0f || trayDy != 0.0f) {
@@ -224,14 +186,14 @@ Overlay::LayoutChange Overlay::Relayout() {
 }
 
 void Overlay::ApplyLayout(bool forceRender) {
-    if (window_ == nullptr) {
+    if (!window_.Created()) {
         return;
     }
     const LayoutChange change = Relayout();
     if (forceRender || change == LayoutChange::Geometry || !frameValid_) {
         Render(true);
     } else if (change == LayoutChange::Moved && shown_) {
-        SetWindowPos(window_, nullptr, layout_.window.left, layout_.window.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        window_.Move(PointI{layout_.window.left, layout_.window.top});
     }
 }
 
@@ -289,7 +251,7 @@ void Overlay::UpdatePillTargets() {
     const int capacity = std::max(1, ExpandedCapacity());
     auto slot = [&](int k) {
         const float y = layout_.trayAbove ? layout_.trayNearEdge - (k + 1) * kPillHeight - k * kPillGap : layout_.trayNearEdge + k * (kPillHeight + kPillGap);
-        return D2D1::RectF(layout_.trayLeft, y, layout_.trayLeft + layout_.trayWidth, y + kPillHeight);
+        return RectF{layout_.trayLeft, y, layout_.trayLeft + layout_.trayWidth, y + kPillHeight};
     };
     int index = 0;
     for (PillState& pill : pills_) {
@@ -316,10 +278,10 @@ void Overlay::UpdatePillTargets() {
             continue;
         }
         const int depth = std::min(i, kMaxPeeks);
-        D2D1_RECT_F rect = slot(0);
+        RectF rect = slot(0);
         if (depth > 0) {
             const float shift = depth * kPeekOffset * (layout_.trayAbove ? -1.0f : 1.0f);
-            rect = D2D1::RectF(rect.left + depth * kPeekInset, rect.top + shift, rect.right - depth * kPeekInset, rect.bottom + shift);
+            rect = RectF{rect.left + depth * kPeekInset, rect.top + shift, rect.right - depth * kPeekInset, rect.bottom + shift};
         }
         pill.target = rect;
         pill.targetOpacity = i == 0 ? 1.0f : (i <= kMaxPeeks ? 1.0f - 0.22f * i : 0.0f);
@@ -337,21 +299,21 @@ bool Overlay::PillsVisible() const {
     return false;
 }
 
-D2D1_RECT_F Overlay::PillRect(const PillState& pill) const {
+RectF Overlay::PillRect(const PillState& pill) const {
     return Shift(pill.rect, lag_.x, lag_.y);
 }
 
-std::optional<D2D1_RECT_F> Overlay::BadgeRect() const {
+std::optional<RectF> Overlay::BadgeRect() const {
     if (!BadgeVisible()) {
         return std::nullopt;
     }
     return BadgeArea();
 }
 
-D2D1_RECT_F Overlay::BadgeArea() const {
-    const D2D1_RECT_F& mascot = layout_.mascot;
+RectF Overlay::BadgeArea() const {
+    const RectF& mascot = layout_.mascot;
     if (!activityVisible_ || !PillsVisible()) {
-        return D2D1::RectF(mascot.right - kBadgeSize, mascot.top, mascot.right, mascot.top + kBadgeSize);
+        return RectF{mascot.right - kBadgeSize, mascot.top, mascot.right, mascot.top + kBadgeSize};
     }
     const float half = kBadgeSize * 0.5f;
     const float corner = kPillHeight * 0.5f;
@@ -359,7 +321,7 @@ D2D1_RECT_F Overlay::BadgeArea() const {
     const float maxX = std::max(minX, layout_.trayLeft + layout_.trayWidth - corner - half);
     const float centerX = std::clamp(mascot.right - half, minX, maxX) + lag_.x;
     const float centerY = layout_.trayNearEdge + (layout_.trayAbove ? kBadgeDockOffset : -kBadgeDockOffset) + lag_.y;
-    return D2D1::RectF(centerX - half, centerY - half, centerX + half, centerY + half);
+    return RectF{centerX - half, centerY - half, centerX + half, centerY + half};
 }
 
 bool Overlay::BadgeWanted() const {
@@ -376,78 +338,69 @@ bool Overlay::BadgeVisible() const {
     return badgeHoldUntilMs_ != 0 && static_cast<int64_t>(MonotonicMs()) < badgeHoldUntilMs_;
 }
 
-D2D1_RECT_F Overlay::MascotHitRect() const {
-    const D2D1_RECT_F& mascot = layout_.mascot;
-    const D2D1_RECT_F& bounds = renderer_.SpriteContentBounds();
+RectF Overlay::MascotHitRect() const {
+    const RectF& mascot = layout_.mascot;
+    const RectF& bounds = renderer_.SpriteContentBounds();
     const float width = mascot.right - mascot.left;
     const float height = mascot.bottom - mascot.top;
-    return D2D1::RectF(mascot.left + bounds.left * width - 2.0f, mascot.top + bounds.top * height - 2.0f, mascot.left + bounds.right * width + 2.0f,
-                       mascot.top + bounds.bottom * height + 2.0f);
+    return RectF{mascot.left + bounds.left * width - 2.0f, mascot.top + bounds.top * height - 2.0f, mascot.left + bounds.right * width + 2.0f,
+                 mascot.top + bounds.bottom * height + 2.0f};
 }
 
-RECT Overlay::DipToWindowPx(const D2D1_RECT_F& rect) const {
+RectI Overlay::DipToWindowPx(const RectF& rect) const {
     const float s = layout_.scale;
-    const LONG width = layout_.window.right - layout_.window.left;
-    const LONG height = layout_.window.bottom - layout_.window.top;
-    RECT result = {static_cast<LONG>(std::floor(rect.left * s)), static_cast<LONG>(std::floor(rect.top * s)), static_cast<LONG>(std::ceil(rect.right * s)),
-                   static_cast<LONG>(std::ceil(rect.bottom * s))};
-    result.left = std::clamp<LONG>(result.left, 0, width);
-    result.right = std::clamp<LONG>(result.right, 0, width);
-    result.top = std::clamp<LONG>(result.top, 0, height);
-    result.bottom = std::clamp<LONG>(result.bottom, 0, height);
+    const int32_t width = layout_.window.right - layout_.window.left;
+    const int32_t height = layout_.window.bottom - layout_.window.top;
+    RectI result = {static_cast<int32_t>(std::floor(rect.left * s)), static_cast<int32_t>(std::floor(rect.top * s)), static_cast<int32_t>(std::ceil(rect.right * s)),
+                    static_cast<int32_t>(std::ceil(rect.bottom * s))};
+    result.left = std::clamp<int32_t>(result.left, 0, width);
+    result.right = std::clamp<int32_t>(result.right, 0, width);
+    result.top = std::clamp<int32_t>(result.top, 0, height);
+    result.bottom = std::clamp<int32_t>(result.bottom, 0, height);
     return result;
 }
 
-POINT Overlay::ClampAnchor(POINT anchor, const RECT& work, float scale) const {
-    const LONG width = static_cast<LONG>(std::lround(mascotWidth_ * scale));
-    const LONG height = static_cast<LONG>(std::lround(MascotHeightDip() * scale));
-    const LONG reserve = static_cast<LONG>(std::lround(kBottomReserve * scale));
-    const LONG maxX = std::max(work.left, work.right - width);
-    const LONG maxY = std::max(work.top, work.bottom - height - reserve);
-    return POINT{std::clamp(anchor.x, work.left, maxX), std::clamp(anchor.y, work.top, maxY)};
+PointI Overlay::ClampAnchor(PointI anchor, const RectI& area, float scale) const {
+    const int32_t width = static_cast<int32_t>(std::lround(mascotWidth_ * scale));
+    const int32_t height = static_cast<int32_t>(std::lround(MascotHeightDip() * scale));
+    const int32_t reserve = static_cast<int32_t>(std::lround(kBottomReserve * scale));
+    const int32_t maxX = std::max(area.left, area.right - width);
+    const int32_t maxY = std::max(area.top, area.bottom - height - reserve);
+    return PointI{std::clamp(anchor.x, area.left, maxX), std::clamp(anchor.y, area.top, maxY)};
 }
 
 std::wstring Overlay::MonitorKey() const {
-    const LONG width = static_cast<LONG>(mascotWidth_ * layout_.scale);
-    const LONG height = static_cast<LONG>(MascotHeightDip() * layout_.scale);
-    return KeyForMonitor(MonitorFromPoint(POINT{anchor_.x + width / 2, anchor_.y + height / 2}, MONITOR_DEFAULTTONEAREST));
+    const int32_t width = static_cast<int32_t>(mascotWidth_ * layout_.scale);
+    const int32_t height = static_cast<int32_t>(MascotHeightDip() * layout_.scale);
+    return DisplayKey(DisplayFromPoint(PointI{anchor_.x + width / 2, anchor_.y + height / 2}).id);
 }
 
 void Overlay::PlaceInitial(const Settings& settings) {
-    MonitorSearch search;
-    search.key = settings.lastMonitorKey;
-    if (!search.key.empty()) {
-        EnumDisplayMonitors(nullptr, nullptr, FindMonitorByKey, reinterpret_cast<LPARAM>(&search));
-    }
-    if (search.found != nullptr) {
-        if (const SavedPosition* saved = FindPosition(settings, search.key)) {
-            MONITORINFO info = {};
-            info.cbSize = sizeof(info);
-            GetMonitorInfoW(search.found, &info);
-            anchor_ = ClampAnchor(saved->anchor, info.rcWork, MonitorScale(search.found));
-            layoutValid_ = false;
-            return;
+    if (!settings.lastMonitorKey.empty()) {
+        if (const std::optional<DisplayInfo> display = FindDisplay(settings.lastMonitorKey)) {
+            if (const SavedPosition* saved = FindPosition(settings, settings.lastMonitorKey)) {
+                anchor_ = ClampAnchor(saved->anchor, display->movable, display->scale);
+                layoutValid_ = false;
+                return;
+            }
         }
     }
-    const HMONITOR primary = MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
-    MONITORINFO info = {};
-    info.cbSize = sizeof(info);
-    GetMonitorInfoW(primary, &info);
-    const float scale = MonitorScale(primary);
-    const LONG width = static_cast<LONG>(std::lround(mascotWidth_ * scale));
-    const LONG height = static_cast<LONG>(std::lround(MascotHeightDip() * scale));
-    const LONG margin = static_cast<LONG>(std::lround(kDefaultEdgeMargin * scale));
-    anchor_ = POINT{info.rcWork.right - width - margin, info.rcWork.bottom - height - margin};
+    const DisplayInfo primary = PrimaryDisplay();
+    const float scale = primary.scale;
+    const int32_t width = static_cast<int32_t>(std::lround(mascotWidth_ * scale));
+    const int32_t height = static_cast<int32_t>(std::lround(MascotHeightDip() * scale));
+    const int32_t margin = static_cast<int32_t>(std::lround(kDefaultEdgeMargin * scale));
+    anchor_ = PointI{primary.work.right - width - margin, primary.work.bottom - height - margin};
     layoutValid_ = false;
 }
 
 void Overlay::HandleDisplayChange() {
-    if (window_ == nullptr) {
+    if (!window_.Created()) {
         return;
     }
     const Layout probe = ComputeLayout();
     if (!dragging_) {
-        anchor_ = ClampAnchor(anchor_, probe.work, probe.scale);
+        anchor_ = ClampAnchor(anchor_, probe.movable, probe.scale);
     }
     frameValid_ = false;
     ApplyLayout(true);
@@ -460,15 +413,15 @@ void Overlay::SetMascotWidth(int widthDip) {
         return;
     }
     const float scale = layoutValid_ ? layout_.scale : 1.0f;
-    const LONG oldWidth = static_cast<LONG>(mascotWidth_ * scale);
-    const LONG oldHeight = static_cast<LONG>(MascotHeightDip() * scale);
+    const int32_t oldWidth = static_cast<int32_t>(mascotWidth_ * scale);
+    const int32_t oldHeight = static_cast<int32_t>(MascotHeightDip() * scale);
     mascotWidth_ = clamped;
-    const LONG newWidth = static_cast<LONG>(mascotWidth_ * scale);
-    const LONG newHeight = static_cast<LONG>(MascotHeightDip() * scale);
+    const int32_t newWidth = static_cast<int32_t>(mascotWidth_ * scale);
+    const int32_t newHeight = static_cast<int32_t>(MascotHeightDip() * scale);
     anchor_.x += (oldWidth - newWidth) / 2;
     anchor_.y += oldHeight - newHeight;
     if (layoutValid_) {
-        anchor_ = ClampAnchor(anchor_, layout_.work, layout_.scale);
+        anchor_ = ClampAnchor(anchor_, layout_.movable, layout_.scale);
     }
     frameValid_ = false;
     ApplyLayout(true);

@@ -2,11 +2,17 @@
 
 #include "util.h"
 
-#include <windows.h>
-
 namespace cp {
 
 namespace {
+
+#if defined(__APPLE__)
+constexpr const wchar_t* kAutostartEnglish = L"Open at login";
+constexpr const wchar_t* kAutostartRussian = L"Открывать при входе в систему";
+#else
+constexpr const wchar_t* kAutostartEnglish = L"Start with Windows";
+constexpr const wchar_t* kAutostartRussian = L"Запускать вместе с Windows";
+#endif
 
 const Strings kEnglish = {
     L"Thinking",
@@ -48,7 +54,7 @@ const Strings kEnglish = {
     L"Open Claude",
     L"Open pets folder",
     L"Pets folder",
-    L"Start with Windows",
+    kAutostartEnglish,
     L"Precise status (Claude Code hooks)",
     L"Language",
     L"Hide pet",
@@ -66,6 +72,10 @@ const Strings kEnglish = {
     L"Could not update ~/.claude/settings.json.",
     L"This pet uses a WebP spritesheet, but the WebP codec is not installed.\nInstall \"WebP Image Extensions\" from Microsoft Store.",
     L"Could not load the pet spritesheet:\n{}",
+    L"Move Claude Pets to the Applications folder and open it from there.\n\n"
+    L"macOS runs downloaded apps from a temporary read-only location, so hooks and the login item would point to a path that disappears.",
+    L"Yes",
+    L"No",
 };
 
 const Strings kRussian = {
@@ -108,7 +118,7 @@ const Strings kRussian = {
     L"Открыть Claude",
     L"Открыть папку питомцев",
     L"Папка с питомцами",
-    L"Запускать вместе с Windows",
+    kAutostartRussian,
     L"Точный статус (хуки Claude Code)",
     L"Язык",
     L"Спрятать питомца",
@@ -126,6 +136,10 @@ const Strings kRussian = {
     L"Не удалось обновить ~/.claude/settings.json.",
     L"Спрайтшит питомца в формате WebP, но кодек WebP не установлен.\nУстановите «Расширения для изображений WebP» из Microsoft Store.",
     L"Не удалось загрузить спрайтшит питомца:\n{}",
+    L"Переместите Claude Pets в папку «Программы» и откройте его оттуда.\n\n"
+    L"macOS запускает скачанные приложения из временной папки только для чтения, поэтому хуки и автозапуск указывали бы на исчезающий путь.",
+    L"Да",
+    L"Нет",
 };
 
 Language g_language = Language::English;
@@ -138,10 +152,6 @@ void SetLanguage(Language language) {
 
 Language CurrentLanguage() {
     return g_language;
-}
-
-Language SystemLanguage() {
-    return PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_RUSSIAN ? Language::Russian : Language::English;
 }
 
 const Strings& Text() {

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <windows.h>
+#include "geometry.h"
 
 #include <cstdint>
 #include <set>
@@ -12,7 +12,7 @@ namespace cp {
 
 struct SavedPosition {
     std::wstring monitorKey;
-    POINT anchor = {};
+    PointI anchor = {};
 };
 
 struct Settings {
@@ -38,7 +38,7 @@ Settings LoadSettings();
 bool SaveSettings(const Settings& settings);
 
 const SavedPosition* FindPosition(const Settings& settings, const std::wstring& monitorKey);
-void StorePosition(Settings& settings, const std::wstring& monitorKey, POINT anchor);
+void StorePosition(Settings& settings, const std::wstring& monitorKey, PointI anchor);
 bool IsDismissed(const Settings& settings, const std::string& id, const std::string& turnKey);
 void Dismiss(Settings& settings, const std::string& id, const std::string& turnKey);
 

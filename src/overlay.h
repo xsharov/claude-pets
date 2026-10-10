@@ -1,13 +1,13 @@
 #pragma once
 
 #include "animation.h"
-#include "frame_clock.h"
+#include "geometry.h"
 #include "notices.h"
+#include "overlay_window.h"
 #include "renderer.h"
 #include "settings.h"
 
-#include <windows.h>
-
+#include <climits>
 #include <functional>
 #include <optional>
 #include <string>
@@ -18,24 +18,23 @@ namespace cp {
 struct OverlayCallbacks {
     std::function<void(const Notice&)> openNotice;
     std::function<void(const Notice&)> dismissNotice;
-    std::function<void(const Notice&, POINT)> noticeMenu;
-    std::function<void(POINT)> contextMenu;
+    std::function<void(const Notice&, PointI)> noticeMenu;
+    std::function<void(PointI)> contextMenu;
     std::function<void()> mascotClicked;
     std::function<void(bool)> activityVisibilityRequested;
-    std::function<void(const std::wstring&, POINT)> positionChanged;
-    std::function<bool(UINT, WPARAM, LPARAM, LRESULT&)> messageHandler;
+    std::function<void(const std::wstring&, PointI)> positionChanged;
 };
 
-class Overlay {
+class Overlay final : private OverlayWindowEvents {
 public:
     Overlay() = default;
     ~Overlay();
     Overlay(const Overlay&) = delete;
     Overlay& operator=(const Overlay&) = delete;
 
-    bool Create(HINSTANCE instance, OverlayCallbacks callbacks);
+    bool Create(OverlayCallbacks callbacks);
     void Destroy();
-    HWND Handle() const { return window_; }
+    OverlayWindow& Window() { return window_; }
     Renderer& Graphics() { return renderer_; }
 
     void PlaceInitial(const Settings& settings);
@@ -50,7 +49,7 @@ public:
     bool IsShown() const { return shown_; }
     void HandleDisplayChange();
     std::wstring MonitorKey() const;
-    POINT Anchor() const { return anchor_; }
+    PointI Anchor() const { return anchor_; }
 
 private:
     enum class HitPart : uint8_t { None, Mascot, Badge, Pill, Peek, Dismiss };
@@ -70,11 +69,12 @@ private:
     };
 
     struct Layout {
-        HMONITOR monitor = nullptr;
+        DisplayId monitor = 0;
         float scale = 1.0f;
-        RECT work = {};
-        RECT window = {};
-        D2D1_RECT_F mascot = {};
+        RectI work = {};
+        RectI movable = {};
+        RectI window = {};
+        RectF mascot = {};
         float trayLeft = 0.0f;
         float trayWidth = 0.0f;
         float trayNearEdge = 0.0f;
@@ -83,8 +83,8 @@ private:
 
     struct PillState {
         Notice notice;
-        D2D1_RECT_F rect = {};
-        D2D1_RECT_F target = {};
+        RectF rect = {};
+        RectF target = {};
         float opacity = 0.0f;
         float targetOpacity = 0.0f;
         int depth = 0;
@@ -92,8 +92,20 @@ private:
         bool leaving = false;
     };
 
-    static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
-    LRESULT HandleMessage(UINT message, WPARAM wParam, LPARAM lParam);
+    void OnPointerMove(PointI client, bool primaryDown) override;
+    void OnPointerLeave() override;
+    void OnPrimaryDown(PointI client) override;
+    void OnPrimaryUp(PointI client) override;
+    void OnSecondaryUp(PointI client) override;
+    void OnWheel(int delta) override;
+    void OnCaptureLost() override;
+    CursorShape CursorAt(PointI client) override;
+    bool Interactive(PointI client) override;
+    void OnFrame() override;
+    void OnTimer(uint32_t id) override;
+    void OnDisplayChanged() override;
+    void OnReducedMotionChanged() override;
+    void Paint() override;
 
     Layout ComputeLayout() const;
     LayoutChange Relayout();
@@ -114,7 +126,7 @@ private:
     bool Animating() const;
     bool StepAnimations(double now, bool& relayout);
     bool PillsVisible() const;
-    D2D1_RECT_F PillRect(const PillState& pill) const;
+    RectF PillRect(const PillState& pill) const;
     LagRange LagLimits() const;
     void ShiftLag(float dx, float dy);
     SpriteFrame CurrentFrame() const;
@@ -122,47 +134,37 @@ private:
     void RefreshAnim(int64_t now);
     void UpdateLook(int64_t now);
     bool LookEligible() const;
-    std::optional<D2D1_RECT_F> BadgeRect() const;
-    D2D1_RECT_F BadgeArea() const;
+    std::optional<RectF> BadgeRect() const;
+    RectF BadgeArea() const;
     bool BadgeVisible() const;
     bool BadgeWanted() const;
     float ShimmerPhase(int64_t now) const;
     bool HasVisibleLoading() const;
-    RECT DipToWindowPx(const D2D1_RECT_F& rect) const;
-    D2D1_RECT_F MascotHitRect() const;
+    RectI DipToWindowPx(const RectF& rect) const;
+    RectF MascotHitRect() const;
 
-    Hit HitTest(POINT clientPx) const;
-    void OnMouseMove(POINT clientPx, WPARAM keys);
+    Hit HitTest(PointI clientPx) const;
     void FinishPressIfReleased();
-    void OnMouseLeave();
-    void OnLeftDown(POINT clientPx);
-    void OnLeftUp(POINT clientPx);
-    void OnRightUp(POINT clientPx);
-    void OnWheel(int delta);
-    void OnCaptureLost();
-    bool OnSetCursor();
     void UpdateHover(const Hit& hit);
     void PollHover();
-    LayoutChange MoveAnchor(POINT anchor);
-    POINT ClampAnchor(POINT anchor, const RECT& work, float scale) const;
-    POINT DragAnchor(POINT cursor) const;
+    LayoutChange MoveAnchor(PointI anchor);
+    PointI ClampAnchor(PointI anchor, const RectI& area, float scale) const;
+    PointI DragAnchor(PointI cursor) const;
     LayoutChange StepDrag(int64_t now);
-    void StartSnap(POINT cursor);
+    void StartSnap(PointI cursor);
     LayoutChange StepSnap(double now);
     void PersistPosition();
     void ActivateBadge();
 
-    HWND window_ = nullptr;
-    HINSTANCE instance_ = nullptr;
     OverlayCallbacks callbacks_;
     Renderer renderer_;
-    FrameClock frameClock_;
+    OverlayWindow window_;
     Layout layout_;
     bool layoutValid_ = false;
     bool frameValid_ = false;
     bool shown_ = false;
 
-    POINT anchor_ = {};
+    PointI anchor_ = {};
     int mascotWidth_ = 112;
     std::vector<Notice> notices_;
     std::vector<PillState> pills_;
@@ -170,39 +172,39 @@ private:
     std::optional<PetAnim> transientAnim_;
     SpriteAnimator animator_;
     SpriteFrame drawnFrame_ = {-1, -1, 0};
+    SpriteFrame paintedFrame_ = {-1, -1, 0};
     bool activityVisible_ = true;
     bool expanded_ = false;
     int scrollOffset_ = 0;
     bool lookAtCursor_ = true;
     std::optional<SpriteFrame> lookFrame_;
-    POINT lastCursor_ = {LONG_MIN, LONG_MIN};
+    PointI lastCursor_ = {INT32_MIN, INT32_MIN};
     int64_t lastCursorMoveMs_ = 0;
     int64_t nextLookPollMs_ = 0;
     int64_t shimmerEpochMs_ = 0;
     int64_t lastShimmerMs_ = 0;
     double lastAnimationMs_ = 0.0;
-    D2D1_POINT_2F lag_ = {};
+    PointF lag_ = {};
 
     Hit hover_;
     bool hoverMascot_ = false;
     int64_t badgeHoldUntilMs_ = 0;
-    bool trackingLeave_ = false;
     bool collapsePending_ = false;
 
     bool pressed_ = false;
     bool dragging_ = false;
     Hit pressHit_;
-    POINT pressCursor_ = {};
+    PointI pressCursor_ = {};
     float grabFractionX_ = 0.5f;
     float grabFractionY_ = 0.5f;
-    LONG lastDragX_ = 0;
+    int32_t lastDragX_ = 0;
 
     bool snapping_ = false;
     float snapX_ = 0.0f;
     float snapY_ = 0.0f;
     float snapVx_ = 0.0f;
     float snapVy_ = 0.0f;
-    POINT snapTarget_ = {};
+    PointI snapTarget_ = {};
     double snapStartMs_ = 0.0;
     double snapLastMs_ = 0.0;
 };

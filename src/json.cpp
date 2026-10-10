@@ -1,11 +1,46 @@
 #include "json.h"
 
+#include <algorithm>
 #include <charconv>
 #include <cmath>
+
+#if defined(__APPLE__)
+#include <xlocale.h>
+
+#include <cstdio>
+#include <cstdlib>
+#endif
 
 namespace cp {
 
 namespace {
+
+double ParseDouble(std::string_view text) {
+#if defined(__APPLE__)
+    const std::string copy(text);
+    return strtod_l(copy.c_str(), nullptr, LC_C_LOCALE);
+#else
+    double parsed = 0.0;
+    std::from_chars(text.data(), text.data() + text.size(), parsed);
+    return parsed;
+#endif
+}
+
+char* FormatDouble(char* first, char* last, double value) {
+#if defined(__APPLE__)
+    const int capacity = static_cast<int>(last - first);
+    int length = 0;
+    for (int precision = 15; precision <= 17; ++precision) {
+        length = snprintf_l(first, static_cast<size_t>(capacity), LC_C_LOCALE, "%.*g", precision, value);
+        if (length <= 0 || length >= capacity || strtod_l(first, nullptr, LC_C_LOCALE) == value) {
+            break;
+        }
+    }
+    return first + std::clamp(length, 0, capacity - 1);
+#else
+    return std::to_chars(first, last, value).ptr;
+#endif
+}
 
 const Json& NullJson() {
     static const Json value;
@@ -359,13 +394,13 @@ void AppendNumber(std::string& out, const Json& value) {
     }
     char buffer[64] = {};
     const double rounded = std::round(number);
-    std::to_chars_result result;
+    char* end = buffer;
     if (rounded == number && std::fabs(number) < 9007199254740992.0) {
-        result = std::to_chars(buffer, buffer + sizeof(buffer), static_cast<int64_t>(rounded));
+        end = std::to_chars(buffer, buffer + sizeof(buffer), static_cast<int64_t>(rounded)).ptr;
     } else {
-        result = std::to_chars(buffer, buffer + sizeof(buffer), number);
+        end = FormatDouble(buffer, buffer + sizeof(buffer), number);
     }
-    out.append(buffer, result.ptr);
+    out.append(buffer, end);
 }
 
 void AppendIndent(std::string& out, int depth) {
@@ -468,9 +503,7 @@ Json Json::MakeInteger(int64_t value) {
 Json Json::MakeRawNumber(std::string raw) {
     Json result;
     result.kind_ = Kind::Number;
-    double parsed = 0.0;
-    std::from_chars(raw.data(), raw.data() + raw.size(), parsed);
-    result.number_ = parsed;
+    result.number_ = ParseDouble(raw);
     result.text_ = std::move(raw);
     return result;
 }

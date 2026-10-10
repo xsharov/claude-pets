@@ -26,3 +26,30 @@ jobs:
           name: claude-pets
           path: build/release/claude-pets.exe
           if-no-files-found: error
+
+  build-macos:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Build
+        run: ./build.sh
+
+      - name: Check
+        run: |
+          app=build/release/ClaudePets.app
+          "$app/Contents/MacOS/ClaudePets" --version
+          "$app/Contents/MacOS/ClaudePets" --diagnose
+          codesign --verify --strict --verbose=2 "$app"
+
+      - name: Package
+        run: ditto -c -k --keepParent build/release/ClaudePets.app claude-pets-macos-arm64.zip
+
+      - name: Upload
+        uses: actions/upload-artifact@v7
+        with:
+          path: claude-pets-macos-arm64.zip
+          archive: false
+          if-no-files-found: error

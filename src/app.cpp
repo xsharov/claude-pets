@@ -4,29 +4,32 @@
 #include "hooks.h"
 #include "i18n.h"
 #include "log.h"
-#include "resource.h"
 #include "util.h"
-
-#include <shellapi.h>
 
 #include <algorithm>
 #include <climits>
 #include <cstdlib>
+#include <iterator>
 
 namespace cp {
 
 namespace {
 
-constexpr UINT_PTR kExpiryTimer = 10;
-constexpr UINT_PTR kSaveTimer = 11;
-constexpr UINT_PTR kTopmostTimer = 12;
-constexpr UINT_PTR kForegroundTimer = 13;
-constexpr int kHotkeyId = 1;
+constexpr uint32_t kExpiryTimer = 10;
+constexpr uint32_t kSaveTimer = 11;
+constexpr uint32_t kTopmostTimer = 12;
+constexpr uint32_t kForegroundTimer = 13;
+constexpr uint32_t kAliveTimer = 14;
 constexpr int kGreetingLifetimeMs = 8000;
 constexpr int64_t kFirstRunUnreadWindowMs = 15LL * 60 * 1000;
-constexpr UINT_PTR kAliveTimer = 14;
 
-enum Command : UINT {
+#if defined(_WIN32)
+constexpr wchar_t kGraphicsFailed[] = L"Direct2D initialization failed.";
+#else
+constexpr wchar_t kGraphicsFailed[] = L"Graphics initialization failed.";
+#endif
+
+enum Command : uint32_t {
     kCommandPetBase = 1000,
     kCommandSizeBase = 1500,
     kCommandShowActivity = 1600,
@@ -51,10 +54,6 @@ enum Command : UINT {
 
 constexpr int kSizes[] = {80, 112, 160, 224};
 
-UINT Checked(bool value) {
-    return value ? MF_CHECKED : MF_UNCHECKED;
-}
-
 int NearestSizeIndex(int width) {
     int best = 0;
     for (int i = 1; i < static_cast<int>(std::size(kSizes)); ++i) {
@@ -65,19 +64,43 @@ int NearestSizeIndex(int width) {
     return best;
 }
 
+bool Activates(uint32_t command) {
+    return command == kCommandOpenClaude || command == kCommandOpenPetsFolder || command == kCommandOpenSession || command == kCommandHooks ||
+           command == kCommandClose;
 }
 
-int App::Run(HINSTANCE instance, bool startHidden) {
-    instance_ = instance;
+MenuItem Item(uint32_t command, std::wstring label, bool checked = false) {
+    MenuItem item;
+    item.command = command;
+    item.label = std::move(label);
+    item.checked = checked;
+    item.activates = Activates(command);
+    return item;
+}
+
+MenuItem Separator() {
+    MenuItem item;
+    item.kind = MenuItem::Kind::Separator;
+    return item;
+}
+
+MenuItem Submenu(std::wstring label) {
+    MenuItem item;
+    item.kind = MenuItem::Kind::Submenu;
+    item.label = std::move(label);
+    return item;
+}
+
+}
+
+App::App() : platform_(*this) {}
+
+int App::Run(bool startHidden) {
     executable_ = ExecutablePath();
     if (!Initialize(startHidden)) {
         return 1;
     }
-    MSG message = {};
-    while (GetMessageW(&message, nullptr, 0, 0) > 0) {
-        TranslateMessage(&message);
-        DispatchMessageW(&message);
-    }
+    platform_.Run();
     Shutdown();
     return 0;
 }
@@ -85,21 +108,22 @@ int App::Run(HINSTANCE instance, bool startHidden) {
 bool App::Initialize(bool startHidden) {
     InitializeSettings();
     ApplyLanguage();
-    icon_ = static_cast<HICON>(LoadImageW(instance_, MAKEINTRESOURCEW(IDI_APP), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR));
     OverlayCallbacks callbacks;
     callbacks.openNotice = [this](const Notice& notice) { OpenNotice(notice); };
     callbacks.dismissNotice = [this](const Notice& notice) { DismissNotice(notice); };
-    callbacks.noticeMenu = [this](const Notice& notice, POINT screen) { ShowNoticeMenu(notice, screen); };
-    callbacks.contextMenu = [this](POINT screen) { ShowContextMenu(screen); };
+    callbacks.noticeMenu = [this](const Notice& notice, PointI screen) { ShowNoticeMenu(notice, screen); };
+    callbacks.contextMenu = [this](PointI screen) { ShowContextMenu(screen); };
     callbacks.mascotClicked = [] { ActivateClaude(); };
     callbacks.activityVisibilityRequested = [this](bool visible) { SetActivityVisible(visible); };
-    callbacks.positionChanged = [this](const std::wstring& monitorKey, POINT anchor) {
+    callbacks.positionChanged = [this](const std::wstring& monitorKey, PointI anchor) {
         StorePosition(settings_, monitorKey, anchor);
         ScheduleSave();
     };
-    callbacks.messageHandler = [this](UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) { return HandleMessage(message, wParam, lParam, result); };
-    if (!overlay_.Create(instance_, std::move(callbacks))) {
-        MessageBoxW(nullptr, L"Direct2D initialization failed.", L"Claude Pets", MB_ICONERROR);
+    if (!overlay_.Create(std::move(callbacks))) {
+        platform_.Alert(kGraphicsFailed, L"Claude Pets", AlertKind::Error);
+        return false;
+    }
+    if (!platform_.Attach(overlay_.Window())) {
         return false;
     }
     ApplyTheme();
@@ -109,16 +133,15 @@ bool App::Initialize(bool startHidden) {
     overlay_.PlaceInitial(settings_);
     RefreshPets();
     SelectPet(settings_.petKey, false);
-    taskbarCreatedMessage_ = RegisterWindowMessageW(L"TaskbarCreated");
     RegisterToggleHotkey();
     SyncHookPath();
     const int64_t now = UnixNowMs();
     monitor_.SetUnreadBaseline(settings_.lastAliveMs > 0 ? settings_.lastAliveMs : now - kFirstRunUnreadWindowMs);
     settings_.lastAliveMs = now;
     ScheduleSave();
-    monitor_.Start(overlay_.Handle(), kSessionsChangedMessage);
-    SetTimer(overlay_.Handle(), kTopmostTimer, 5000, nullptr);
-    SetTimer(overlay_.Handle(), kAliveTimer, 5 * 60 * 1000, nullptr);
+    monitor_.Start([this] { platform_.PostSessionsChanged(); });
+    platform_.SetTimer(kTopmostTimer, 5000);
+    platform_.SetTimer(kAliveTimer, 5 * 60 * 1000);
     if (startHidden) {
         HidePet();
     } else {
@@ -130,11 +153,7 @@ bool App::Initialize(bool startHidden) {
 
 void App::Shutdown() {
     monitor_.Stop();
-    tray_.Hide();
-    if (icon_ != nullptr) {
-        DestroyIcon(icon_);
-        icon_ = nullptr;
-    }
+    platform_.HideTray();
 }
 
 void App::InitializeSettings() {
@@ -168,16 +187,11 @@ void App::ApplyTheme() {
 }
 
 void App::RegisterToggleHotkey() {
-    const HWND window = overlay_.Handle();
     if (hotkeyRegistered_) {
-        UnregisterHotKey(window, kHotkeyId);
+        platform_.UnregisterHotkey();
         hotkeyRegistered_ = false;
     }
-    UINT modifiers = 0;
-    UINT key = 0;
-    if (ParseHotkey(settings_.hotkey, modifiers, key)) {
-        hotkeyRegistered_ = RegisterHotKey(window, kHotkeyId, modifiers | MOD_NOREPEAT, key) != FALSE;
-    }
+    hotkeyRegistered_ = platform_.RegisterHotkey(settings_.hotkey);
 }
 
 void App::RefreshPets() {
@@ -209,11 +223,11 @@ void App::SelectPet(const std::wstring& key, bool persist) {
     if (!loaded) {
         const Strings& text = Text();
         const std::wstring message = error == L"codec" ? std::wstring(text.codecMissing) : Format(text.spriteFailed, pet->spritesheet);
-        MessageBoxW(overlay_.Handle(), message.c_str(), L"Claude Pets", MB_ICONWARNING | MB_SETFOREGROUND | MB_TOPMOST);
+        platform_.Alert(message, L"Claude Pets", AlertKind::Warning);
     }
     activePetKey_ = pet->key;
     if (LogEnabled()) {
-        const D2D1_RECT_F& bounds = graphics.SpriteContentBounds();
+        const RectF& bounds = graphics.SpriteContentBounds();
         LogLine("pet " + Narrow(pet->key) + " rows=" + std::to_string(graphics.SpriteRows()) + " bounds=" + std::to_string(bounds.left) + "," + std::to_string(bounds.top) + "," +
                 std::to_string(bounds.right) + "," + std::to_string(bounds.bottom));
     }
@@ -239,112 +253,65 @@ void App::RebuildNotices() {
     const int64_t nextExpiry = NextExpiryMs(notices);
     const PetAnim anim = MascotAnimFor(notices);
     overlay_.SetNotices(std::move(notices), anim);
-    const HWND window = overlay_.Handle();
     if (nextExpiry == LLONG_MAX) {
-        KillTimer(window, kExpiryTimer);
+        platform_.KillTimer(kExpiryTimer);
         return;
     }
     const int64_t delay = std::clamp<int64_t>(nextExpiry - now + 50, 100, 60LL * 60 * 1000);
-    SetTimer(window, kExpiryTimer, static_cast<UINT>(delay), nullptr);
+    platform_.SetTimer(kExpiryTimer, static_cast<uint32_t>(delay));
 }
 
 void App::ScheduleSave() {
-    SetTimer(overlay_.Handle(), kSaveTimer, 800, nullptr);
+    platform_.SetTimer(kSaveTimer, 800);
 }
 
 void App::SaveNow() {
-    KillTimer(overlay_.Handle(), kSaveTimer);
+    platform_.KillTimer(kSaveTimer);
     settings_.lastAliveMs = UnixNowMs();
     SaveSettings(settings_);
 }
 
-bool App::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) {
-    switch (message) {
-    case kSessionsChangedMessage:
-        sessions_ = monitor_.Snapshot();
-        RebuildNotices();
-        result = 0;
-        return true;
-    case kShowPetMessage:
-        ShowPet();
-        result = 0;
-        return true;
-    case kTrayMessage:
-        switch (LOWORD(lParam)) {
-        case WM_LBUTTONUP:
-        case WM_LBUTTONDBLCLK:
-            ShowPet();
-            break;
-        case WM_RBUTTONUP:
-        case WM_CONTEXTMENU:
-            ShowTrayMenu();
-            break;
-        default:
-            break;
-        }
-        result = 0;
-        return true;
-    case WM_COPYDATA: {
-        const auto* data = reinterpret_cast<const COPYDATASTRUCT*>(lParam);
-        if (data == nullptr || data->dwData != kHookCopyDataId || data->lpData == nullptr || data->cbData > (16u << 20)) {
-            return false;
-        }
-        monitor_.SubmitHookEvent(std::string(static_cast<const char*>(data->lpData), data->cbData));
-        result = TRUE;
-        return true;
-    }
-    case WM_HOTKEY:
-        if (wParam == kHotkeyId) {
-            TogglePet();
-            result = 0;
-            return true;
-        }
-        return false;
-    case WM_TIMER:
-        if (wParam == kExpiryTimer || wParam == kSaveTimer || wParam == kTopmostTimer || wParam == kForegroundTimer || wParam == kAliveTimer) {
-            HandleTimer(wParam);
-            result = 0;
-            return true;
-        }
-        return false;
-    case WM_SETTINGCHANGE:
-        if (lParam != 0 && wcscmp(reinterpret_cast<const wchar_t*>(lParam), L"ImmersiveColorSet") == 0) {
-            ApplyTheme();
-        }
-        return false;
-    case WM_QUERYENDSESSION:
-        SaveNow();
-        result = TRUE;
-        return true;
-    case WM_ENDSESSION:
-        if (wParam != 0) {
-            SaveNow();
-        }
-        return false;
-    case WM_CLOSE:
-        Quit();
-        result = 0;
-        return true;
-    case WM_DESTROY:
-        if (!quitting_) {
-            PostQuitMessage(0);
-        }
-        return false;
-    default:
-        if (taskbarCreatedMessage_ != 0 && message == taskbarCreatedMessage_) {
-            tray_.Restore();
-            result = 0;
-            return true;
-        }
-        return false;
-    }
+void App::OnSessionsChanged() {
+    sessions_ = monitor_.Snapshot();
+    RebuildNotices();
 }
 
-void App::HandleTimer(UINT_PTR id) {
-    const HWND window = overlay_.Handle();
+void App::OnHookEvent(std::string payload) {
+    monitor_.SubmitHookEvent(std::move(payload));
+}
+
+void App::OnShowRequested() {
+    ShowPet();
+}
+
+void App::OnHotkey() {
+    TogglePet();
+}
+
+void App::OnThemeChanged() {
+    ApplyTheme();
+}
+
+void App::OnTrayClicked() {
+    ShowPet();
+}
+
+void App::OnTrayMenu() {
+    ShowTrayMenu();
+}
+
+void App::OnSessionEnding() {
+    SaveNow();
+}
+
+void App::OnCloseRequested() {
+    Quit();
+}
+
+void App::OnTimer(uint32_t id) {
     switch (id) {
     case kExpiryTimer:
-        KillTimer(window, kExpiryTimer);
+        platform_.KillTimer(kExpiryTimer);
         RebuildNotices();
         break;
     case kSaveTimer:
@@ -352,14 +319,14 @@ void App::HandleTimer(UINT_PTR id) {
         break;
     case kTopmostTimer:
         if (overlay_.IsShown()) {
-            SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+            overlay_.Window().EnsureTopmost();
         }
         break;
     case kAliveTimer:
         SaveNow();
         break;
     case kForegroundTimer:
-        KillTimer(window, kForegroundTimer);
+        platform_.KillTimer(kForegroundTimer);
         if (!IsClaudeForeground()) {
             BringClaudeToFront();
         }
@@ -385,7 +352,7 @@ void App::OpenNotice(const Notice& notice) {
         RebuildNotices();
     }
     OpenClaudeSession(notice.id);
-    SetTimer(overlay_.Handle(), kForegroundTimer, 1200, nullptr);
+    platform_.SetTimer(kForegroundTimer, 1200);
 }
 
 void App::DismissNotice(const Notice& notice) {
@@ -406,12 +373,12 @@ void App::SetActivityVisible(bool visible) {
 
 void App::ShowPet() {
     overlay_.Show();
-    tray_.Hide();
+    platform_.HideTray();
 }
 
 void App::HidePet() {
     overlay_.Hide();
-    tray_.Show(overlay_.Handle(), kTrayMessage, icon_, Text().trayTip);
+    platform_.ShowTray(Text().trayTip);
 }
 
 void App::TogglePet() {
@@ -429,68 +396,67 @@ void App::Quit() {
     quitting_ = true;
     SaveNow();
     monitor_.Stop();
-    tray_.Hide();
+    platform_.HideTray();
     if (hotkeyRegistered_) {
-        UnregisterHotKey(overlay_.Handle(), kHotkeyId);
+        platform_.UnregisterHotkey();
         hotkeyRegistered_ = false;
     }
+    platform_.Quit();
     overlay_.Destroy();
-    PostQuitMessage(0);
 }
 
 void App::ToggleHooks() {
     const Strings& text = Text();
-    const HWND owner = overlay_.Handle();
     const HookState state = QueryHookState(executable_);
     if (state == HookState::Unreadable) {
-        MessageBoxW(owner, text.hooksFailed, text.hooksInstallTitle, MB_ICONWARNING | MB_SETFOREGROUND | MB_TOPMOST);
+        platform_.Alert(text.hooksFailed, text.hooksInstallTitle, AlertKind::Warning);
         return;
     }
     if (state == HookState::Installed || state == HookState::Outdated) {
-        if (MessageBoxW(owner, text.hooksRemoveBody, text.hooksInstallTitle, MB_YESNO | MB_ICONQUESTION | MB_SETFOREGROUND | MB_TOPMOST) == IDYES && !UninstallHooks()) {
-            MessageBoxW(owner, text.hooksFailed, text.hooksInstallTitle, MB_ICONWARNING | MB_SETFOREGROUND | MB_TOPMOST);
+        if (platform_.Confirm(text.hooksRemoveBody, text.hooksInstallTitle) && !UninstallHooks()) {
+            platform_.Alert(text.hooksFailed, text.hooksInstallTitle, AlertKind::Warning);
         }
         return;
     }
-    if (MessageBoxW(owner, text.hooksInstallBody, text.hooksInstallTitle, MB_YESNO | MB_ICONQUESTION | MB_SETFOREGROUND | MB_TOPMOST) == IDYES &&
-        !InstallHooks(executable_)) {
-        MessageBoxW(owner, text.hooksFailed, text.hooksInstallTitle, MB_ICONWARNING | MB_SETFOREGROUND | MB_TOPMOST);
+    if (RunsFromTemporaryLocation(executable_)) {
+        platform_.Alert(text.appTranslocated, text.hooksInstallTitle, AlertKind::Warning);
+        return;
+    }
+    if (platform_.Confirm(text.hooksInstallBody, text.hooksInstallTitle) && !InstallHooks(executable_)) {
+        platform_.Alert(text.hooksFailed, text.hooksInstallTitle, AlertKind::Warning);
     }
 }
 
+void App::ToggleAutostart() {
+    const bool enable = !IsAutostartEnabled(executable_);
+    if (enable && RunsFromTemporaryLocation(executable_)) {
+        platform_.Alert(Text().appTranslocated, L"Claude Pets", AlertKind::Warning);
+        return;
+    }
+    SetAutostart(executable_, enable);
+}
+
 void App::SyncHookPath() {
-    if (QueryHookState(executable_) == HookState::Outdated) {
+    if (!RunsFromTemporaryLocation(executable_) && QueryHookState(executable_) == HookState::Outdated) {
         InstallHooks(executable_);
     }
 }
 
-UINT App::TrackMenu(HMENU menu, POINT screen) {
-    const HWND window = overlay_.Handle();
-    const HWND previous = GetForegroundWindow();
-    SetForegroundWindow(window);
-    const UINT command = static_cast<UINT>(TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY, screen.x, screen.y, window, nullptr));
-    PostMessageW(window, WM_NULL, 0, 0);
-    const bool opensSomething = command == kCommandOpenClaude || command == kCommandOpenPetsFolder || command == kCommandOpenSession || command == kCommandHooks ||
-                                command == kCommandClose;
-    if (!opensSomething && previous != nullptr && previous != window && IsWindow(previous)) {
-        SetForegroundWindow(previous);
-    }
-    return command;
-}
-
-void App::ShowContextMenu(POINT screen) {
+void App::ShowContextMenu(PointI screen) {
     RefreshPets();
     const Strings& text = Text();
-    HMENU menu = CreatePopupMenu();
-    HMENU petMenu = CreatePopupMenu();
+    std::vector<MenuItem> menu;
+    MenuItem petMenu = Submenu(text.menuPet);
     if (pets_.empty()) {
-        AppendMenuW(petMenu, MF_STRING | MF_GRAYED, 0, text.menuNoPets);
+        MenuItem empty = Item(0, text.menuNoPets);
+        empty.enabled = false;
+        petMenu.children.push_back(std::move(empty));
     }
     for (size_t i = 0; i < pets_.size() && i < 400; ++i) {
-        AppendMenuW(petMenu, MF_STRING | Checked(pets_[i].key == activePetKey_), kCommandPetBase + static_cast<UINT>(i), pets_[i].displayName.c_str());
+        petMenu.children.push_back(Item(kCommandPetBase + static_cast<uint32_t>(i), pets_[i].displayName, pets_[i].key == activePetKey_));
     }
-    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(petMenu), text.menuPet);
-    HMENU folderMenu = CreatePopupMenu();
+    menu.push_back(std::move(petMenu));
+    MenuItem folderMenu = Submenu(text.menuPetsFolder);
     const std::wstring home = HomeDirectory();
     for (const PetSource source : {PetSource::Claude, PetSource::Codex}) {
         std::wstring folder = PetFolder(source);
@@ -499,66 +465,63 @@ void App::ShowContextMenu(POINT screen) {
         }
         const size_t count = source == petSource_ ? pets_.size() : DiscoverPets(source).size();
         const std::wstring label = folder + L"  (" + std::to_wstring(count) + L")";
-        AppendMenuW(folderMenu, MF_STRING | Checked(source == petSource_), source == PetSource::Codex ? kCommandPetsCodex : kCommandPetsClaude, label.c_str());
+        folderMenu.children.push_back(Item(source == PetSource::Codex ? kCommandPetsCodex : kCommandPetsClaude, label, source == petSource_));
     }
-    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(folderMenu), text.menuPetsFolder);
-    HMENU sizeMenu = CreatePopupMenu();
+    menu.push_back(std::move(folderMenu));
+    MenuItem sizeMenu = Submenu(text.menuSize);
     const wchar_t* sizeLabels[] = {text.sizeSmall, text.sizeMedium, text.sizeLarge, text.sizeHuge};
     const int currentSize = NearestSizeIndex(settings_.mascotWidth);
     for (int i = 0; i < static_cast<int>(std::size(kSizes)); ++i) {
-        AppendMenuW(sizeMenu, MF_STRING | Checked(i == currentSize), kCommandSizeBase + static_cast<UINT>(i), sizeLabels[i]);
+        sizeMenu.children.push_back(Item(kCommandSizeBase + static_cast<uint32_t>(i), sizeLabels[i], i == currentSize));
     }
-    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sizeMenu), text.menuSize);
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING | Checked(settings_.showActivity), kCommandShowActivity, text.menuShowActivity);
-    AppendMenuW(menu, MF_STRING | Checked(settings_.lookAtCursor), kCommandLookAtCursor, text.menuLookAtCursor);
+    menu.push_back(std::move(sizeMenu));
+    menu.push_back(Separator());
+    menu.push_back(Item(kCommandShowActivity, text.menuShowActivity, settings_.showActivity));
+    menu.push_back(Item(kCommandLookAtCursor, text.menuLookAtCursor, settings_.lookAtCursor));
     if (!settings_.muted.empty()) {
-        AppendMenuW(menu, MF_STRING, kCommandUnmuteAll, text.menuUnmuteAll);
+        menu.push_back(Item(kCommandUnmuteAll, text.menuUnmuteAll));
     }
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, kCommandOpenClaude, text.menuOpenClaude);
-    AppendMenuW(menu, MF_STRING, kCommandOpenPetsFolder, text.menuOpenPetsFolder);
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING | Checked(IsAutostartEnabled(executable_)), kCommandAutostart, text.menuStartWithWindows);
+    menu.push_back(Separator());
+    menu.push_back(Item(kCommandOpenClaude, text.menuOpenClaude));
+    menu.push_back(Item(kCommandOpenPetsFolder, text.menuOpenPetsFolder));
+    menu.push_back(Separator());
+    menu.push_back(Item(kCommandAutostart, text.menuAutostart, IsAutostartEnabled(executable_)));
     const HookState hooks = QueryHookState(executable_);
-    AppendMenuW(menu, MF_STRING | Checked(hooks == HookState::Installed || hooks == HookState::Outdated), kCommandHooks, text.menuHooks);
-    HMENU languageMenu = CreatePopupMenu();
-    AppendMenuW(languageMenu, MF_STRING | Checked(settings_.language != L"en" && settings_.language != L"ru"), kCommandLanguageSystem,
-                CurrentLanguage() == Language::Russian ? L"Как в системе" : L"System default");
-    AppendMenuW(languageMenu, MF_STRING | Checked(settings_.language == L"en"), kCommandLanguageEnglish, L"English");
-    AppendMenuW(languageMenu, MF_STRING | Checked(settings_.language == L"ru"), kCommandLanguageRussian, L"Русский");
-    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(languageMenu), text.menuLanguage);
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    std::wstring hideLabel = text.menuHide;
-    const std::wstring hotkey = HotkeyLabel(settings_.hotkey);
-    if (hotkeyRegistered_ && !hotkey.empty()) {
-        hideLabel += L"\t" + hotkey;
+    menu.push_back(Item(kCommandHooks, text.menuHooks, hooks == HookState::Installed || hooks == HookState::Outdated));
+    MenuItem languageMenu = Submenu(text.menuLanguage);
+    languageMenu.children.push_back(Item(kCommandLanguageSystem, CurrentLanguage() == Language::Russian ? L"Как в системе" : L"System default",
+                                         settings_.language != L"en" && settings_.language != L"ru"));
+    languageMenu.children.push_back(Item(kCommandLanguageEnglish, L"English", settings_.language == L"en"));
+    languageMenu.children.push_back(Item(kCommandLanguageRussian, L"Русский", settings_.language == L"ru"));
+    menu.push_back(std::move(languageMenu));
+    menu.push_back(Separator());
+    MenuItem hide = Item(kCommandHide, text.menuHide);
+    if (hotkeyRegistered_) {
+        hide.shortcut = HotkeyLabel(settings_.hotkey);
     }
-    AppendMenuW(menu, MF_STRING, kCommandHide, hideLabel.c_str());
-    AppendMenuW(menu, MF_STRING, kCommandClose, text.menuClose);
-    const UINT command = TrackMenu(menu, screen);
-    DestroyMenu(menu);
+    menu.push_back(std::move(hide));
+    menu.push_back(Item(kCommandClose, text.menuClose));
+    const uint32_t command = platform_.ShowMenu(menu, screen);
     if (command != 0) {
         ExecuteCommand(command);
     }
 }
 
-void App::ShowNoticeMenu(const Notice& notice, POINT screen) {
+void App::ShowNoticeMenu(const Notice& notice, PointI screen) {
     const Strings& text = Text();
-    HMENU menu = CreatePopupMenu();
+    std::vector<MenuItem> menu;
     if (notice.kind == NoticeKind::Session) {
-        AppendMenuW(menu, MF_STRING, kCommandOpenSession, text.menuOpenSession);
+        menu.push_back(Item(kCommandOpenSession, text.menuOpenSession));
     }
-    AppendMenuW(menu, MF_STRING, kCommandDismiss, text.menuDismiss);
+    menu.push_back(Item(kCommandDismiss, text.menuDismiss));
     if (notice.kind == NoticeKind::Session) {
-        AppendMenuW(menu, MF_STRING, kCommandMute, text.menuMute);
+        menu.push_back(Item(kCommandMute, text.menuMute));
     }
     if (!settings_.muted.empty()) {
-        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(menu, MF_STRING, kCommandUnmuteAll, text.menuUnmuteAll);
+        menu.push_back(Separator());
+        menu.push_back(Item(kCommandUnmuteAll, text.menuUnmuteAll));
     }
-    const UINT command = TrackMenu(menu, screen);
-    DestroyMenu(menu);
+    const uint32_t command = platform_.ShowMenu(menu, screen);
     switch (command) {
     case kCommandOpenSession:
         OpenNotice(notice);
@@ -583,20 +546,17 @@ void App::ShowNoticeMenu(const Notice& notice, POINT screen) {
 
 void App::ShowTrayMenu() {
     const Strings& text = Text();
-    HMENU menu = CreatePopupMenu();
-    AppendMenuW(menu, MF_STRING, kCommandTrayShow, text.trayShow);
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, kCommandClose, text.menuClose);
-    POINT cursor = {};
-    GetCursorPos(&cursor);
-    const UINT command = TrackMenu(menu, cursor);
-    DestroyMenu(menu);
+    std::vector<MenuItem> menu;
+    menu.push_back(Item(kCommandTrayShow, text.trayShow));
+    menu.push_back(Separator());
+    menu.push_back(Item(kCommandClose, text.menuClose));
+    const uint32_t command = platform_.ShowMenu(menu, CursorPosition());
     if (command != 0) {
         ExecuteCommand(command);
     }
 }
 
-void App::ExecuteCommand(UINT command) {
+void App::ExecuteCommand(uint32_t command) {
     if (command >= kCommandPetBase && command < kCommandPetBase + pets_.size()) {
         SelectPet(pets_[command - kCommandPetBase].key, true);
         return;
@@ -623,7 +583,7 @@ void App::ExecuteCommand(UINT command) {
     case kCommandOpenPetsFolder: {
         const std::wstring folder = PetFolder(petSource_);
         EnsureDirectory(folder);
-        ShellExecuteW(nullptr, L"open", folder.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        platform_.OpenFolder(folder);
         break;
     }
     case kCommandPetsClaude:
@@ -634,7 +594,7 @@ void App::ExecuteCommand(UINT command) {
         ScheduleSave();
         break;
     case kCommandAutostart:
-        SetAutostart(executable_, !IsAutostartEnabled(executable_));
+        ToggleAutostart();
         break;
     case kCommandHooks:
         ToggleHooks();

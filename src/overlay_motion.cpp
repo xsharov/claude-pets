@@ -92,7 +92,7 @@ void Overlay::RecordFrame(double now, double renderMs) {
         if (pill.opacity <= 0.01f) {
             continue;
         }
-        const D2D1_RECT_F rect = PillRect(pill);
+        const RectF rect = PillRect(pill);
         if (rect.left - kPillShadowSide < -0.5f || rect.right + kPillShadowSide > width + 0.5f || rect.top - kPillShadowTop < -0.5f ||
             rect.bottom + kPillShadowBottom > height + 0.5f) {
             ++stats.clipped;
@@ -112,7 +112,7 @@ SpriteFrame Overlay::CurrentFrame() const {
 Overlay::LagRange Overlay::LagLimits() const {
     LagRange range;
     bool any = false;
-    D2D1_RECT_F bounds = {};
+    RectF bounds = {};
     for (const PillState& pill : pills_) {
         if (pill.opacity <= 0.01f && pill.targetOpacity <= 0.0f) {
             continue;
@@ -132,8 +132,8 @@ Overlay::LagRange Overlay::LagLimits() const {
     }
     const float width = static_cast<float>(layout_.window.right - layout_.window.left) / layout_.scale;
     const float height = static_cast<float>(layout_.window.bottom - layout_.window.top) / layout_.scale;
-    const D2D1_RECT_F& mascot = layout_.mascot;
-    const D2D1_RECT_F& content = renderer_.SpriteContentBounds();
+    const RectF& mascot = layout_.mascot;
+    const RectF& content = renderer_.SpriteContentBounds();
     const float mascotHeight = mascot.bottom - mascot.top;
     range.minX = std::min(0.0f, kPillShadowSide - bounds.left);
     range.maxX = std::max(0.0f, width - kPillShadowSide - bounds.right);
@@ -204,8 +204,8 @@ bool Overlay::Animating() const {
 
 void Overlay::Advance(double now) {
     if (!shown_) {
-        KillTimer(window_, kAnimationTimer);
-        frameClock_.SetActive(false);
+        window_.KillTimer(kAnimationTimer);
+        window_.SetFrameClockActive(false);
         return;
     }
     const int64_t ticks = static_cast<int64_t>(now);
@@ -245,34 +245,34 @@ void Overlay::Advance(double now) {
         Render(full);
         RecordFrame(now, MonotonicMs() - renderStart);
     } else if (change == LayoutChange::Moved) {
-        SetWindowPos(window_, nullptr, layout_.window.left, layout_.window.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        window_.Move(PointI{layout_.window.left, layout_.window.top});
     }
     ScheduleTimer();
 }
 
 void Overlay::ScheduleTimer() {
-    if (window_ == nullptr) {
+    if (!window_.Created()) {
         return;
     }
     if (!shown_) {
-        KillTimer(window_, kAnimationTimer);
-        frameClock_.SetActive(false);
+        window_.KillTimer(kAnimationTimer);
+        window_.SetFrameClockActive(false);
         return;
     }
     const int64_t now = static_cast<int64_t>(MonotonicMs());
     int64_t next = LLONG_MAX;
     if (Animating()) {
-        if (!frameClock_.Active()) {
+        if (!window_.FrameClockActive()) {
             lastAnimationMs_ = MonotonicMs();
-            frameClock_.SetActive(true);
+            window_.SetFrameClockActive(true);
         }
-        if (frameClock_.Running()) {
-            SetTimer(window_, kAnimationTimer, static_cast<UINT>(kFrameWatchdogMs), nullptr);
+        if (window_.FrameClockRunning()) {
+            window_.SetTimer(kAnimationTimer, static_cast<uint32_t>(kFrameWatchdogMs));
             return;
         }
         next = now + 16;
     } else {
-        frameClock_.SetActive(false);
+        window_.SetFrameClockActive(false);
     }
     if (!lookFrame_.has_value()) {
         next = std::min(next, animator_.NextDeadlineMs());
@@ -296,27 +296,23 @@ void Overlay::ScheduleTimer() {
         next = std::min(next, now + 50);
     }
     if (next == LLONG_MAX) {
-        KillTimer(window_, kAnimationTimer);
+        window_.KillTimer(kAnimationTimer);
         return;
     }
-    const int64_t delay = std::clamp<int64_t>(next - now, USER_TIMER_MINIMUM, 60000);
-    SetTimer(window_, kAnimationTimer, static_cast<UINT>(delay), nullptr);
+    const int64_t delay = std::clamp<int64_t>(next - now, kMinTimerDelayMs, 60000);
+    window_.SetTimer(kAnimationTimer, static_cast<uint32_t>(delay));
 }
 
-POINT Overlay::DragAnchor(POINT cursor) const {
+PointI Overlay::DragAnchor(PointI cursor) const {
     const float scale = layout_.scale;
-    const POINT anchor = {cursor.x - static_cast<LONG>(std::lround(grabFractionX_ * mascotWidth_ * scale)),
-                          cursor.y - static_cast<LONG>(std::lround(grabFractionY_ * MascotHeightDip() * scale))};
-    MONITORINFO info = {};
-    info.cbSize = sizeof(info);
-    GetMonitorInfoW(MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST), &info);
-    return ClampAnchor(anchor, info.rcWork, scale);
+    const PointI anchor = {cursor.x - static_cast<int32_t>(std::lround(grabFractionX_ * mascotWidth_ * scale)),
+                           cursor.y - static_cast<int32_t>(std::lround(grabFractionY_ * MascotHeightDip() * scale))};
+    return ClampAnchor(anchor, DisplayFromPoint(cursor).movable, scale);
 }
 
 Overlay::LayoutChange Overlay::StepDrag(int64_t now) {
-    POINT cursor = {};
-    GetCursorPos(&cursor);
-    const LONG step = cursor.x - lastDragX_;
+    const PointI cursor = CursorPosition();
+    const int32_t step = cursor.x - lastDragX_;
     if (step >= kDragThresholdPx) {
         transientAnim_ = PetAnim::RunningRight;
         lastDragX_ = cursor.x;
@@ -328,7 +324,7 @@ Overlay::LayoutChange Overlay::StepDrag(int64_t now) {
     return MoveAnchor(DragAnchor(cursor));
 }
 
-Overlay::LayoutChange Overlay::MoveAnchor(POINT anchor) {
+Overlay::LayoutChange Overlay::MoveAnchor(PointI anchor) {
     if (anchor.x == anchor_.x && anchor.y == anchor_.y) {
         return LayoutChange::None;
     }
@@ -356,7 +352,7 @@ Overlay::LayoutChange Overlay::StepSnap(double now) {
         PersistPosition();
         return change;
     }
-    return MoveAnchor(POINT{static_cast<LONG>(std::lround(snapX_)), static_cast<LONG>(std::lround(snapY_))});
+    return MoveAnchor(PointI{static_cast<int32_t>(std::lround(snapX_)), static_cast<int32_t>(std::lround(snapY_))});
 }
 
 }

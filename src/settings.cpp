@@ -50,8 +50,8 @@ Settings LoadSettings() {
     for (const Json& item : root["positions"].items()) {
         SavedPosition position;
         position.monitorKey = Widen(item["monitor"].str());
-        position.anchor.x = static_cast<LONG>(item["x"].integer());
-        position.anchor.y = static_cast<LONG>(item["y"].integer());
+        position.anchor.x = static_cast<int32_t>(item["x"].integer());
+        position.anchor.y = static_cast<int32_t>(item["y"].integer());
         if (!position.monitorKey.empty()) {
             settings.positions.push_back(std::move(position));
         }
@@ -122,7 +122,7 @@ const SavedPosition* FindPosition(const Settings& settings, const std::wstring& 
     return nullptr;
 }
 
-void StorePosition(Settings& settings, const std::wstring& monitorKey, POINT anchor) {
+void StorePosition(Settings& settings, const std::wstring& monitorKey, PointI anchor) {
     auto existing = std::find_if(settings.positions.begin(), settings.positions.end(), [&](const SavedPosition& position) {
         return position.monitorKey == monitorKey;
     });

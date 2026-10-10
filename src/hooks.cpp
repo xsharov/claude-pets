@@ -22,7 +22,20 @@ bool IsToolEvent(std::string_view event) {
     return event == "PreToolUse" || event == "PostToolUse" || event == "PostToolUseFailure" || event == "PermissionRequest" || event == "PermissionDenied";
 }
 
+bool IsOtherPlatformCommand(std::string_view command) {
+#if defined(_WIN32)
+    return StartsWith(command, "/");
+#else
+    const bool drive = command.size() >= 3 && ((command[0] >= 'A' && command[0] <= 'Z') || (command[0] >= 'a' && command[0] <= 'z')) && command[1] == ':' &&
+                       (command[2] == '\\' || command[2] == '/');
+    return drive || StartsWith(command, "\\\\");
+#endif
+}
+
 bool IsOurHook(const Json& hook) {
+    if (IsOtherPlatformCommand(hook["command"].str())) {
+        return false;
+    }
     for (const Json& argument : hook["args"].items()) {
         if (argument.str() == kArgument) {
             return true;
@@ -40,7 +53,11 @@ struct SettingsFile {
 
 bool LoadClaudeSettings(SettingsFile& file) {
     std::string text;
-    file.existed = ReadWholeFile(ClaudeSettingsPath(), text, size_t{16} << 20);
+    const std::wstring path = ClaudeSettingsPath();
+    file.existed = FileExists(path);
+    if (file.existed && !ReadWholeFile(path, text, size_t{16} << 20)) {
+        return false;
+    }
     if (!file.existed || text.find_first_not_of(" \t\r\n") == std::string::npos) {
         file.root = Json::MakeObject();
         return true;
@@ -219,7 +236,7 @@ bool InstallHooks(const std::wstring& executable) {
     if (file.existed) {
         const std::wstring backup = ClaudeSettingsPath() + L".claude-pets.bak";
         if (!FileExists(backup)) {
-            CopyFileW(ClaudeSettingsPath().c_str(), backup.c_str(), TRUE);
+            CopyFileIfMissing(ClaudeSettingsPath(), backup);
         }
     }
     RemoveOurHooks(root);
@@ -252,37 +269,15 @@ bool UninstallHooks() {
 }
 
 int RunHookRelay() {
-    const HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
-    if (input == nullptr || input == INVALID_HANDLE_VALUE) {
-        return 0;
-    }
     std::string payload;
-    char buffer[16384];
-    for (;;) {
-        DWORD read = 0;
-        if (!ReadFile(input, buffer, sizeof(buffer), &read, nullptr) || read == 0) {
-            break;
-        }
-        payload.append(buffer, read);
-        if (payload.size() > kMaxPayload) {
-            return 0;
-        }
+    if (!ReadHookInput(payload, kMaxPayload)) {
+        return 0;
     }
     Json parsed;
     if (!ParseJson(payload, parsed) || !parsed.isObject()) {
         return 0;
     }
-    const HWND target = FindWindowW(L"ClaudePetsOverlay", nullptr);
-    if (target == nullptr) {
-        return 0;
-    }
-    std::string message = MinimizePayload(parsed);
-    COPYDATASTRUCT data = {};
-    data.dwData = kHookCopyDataId;
-    data.cbData = static_cast<DWORD>(message.size());
-    data.lpData = message.data();
-    DWORD_PTR result = 0;
-    SendMessageTimeoutW(target, WM_COPYDATA, 0, reinterpret_cast<LPARAM>(&data), SMTO_ABORTIFHUNG, 2000, &result);
+    DeliverHookEvent(MinimizePayload(parsed));
     return 0;
 }
 

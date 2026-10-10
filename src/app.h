@@ -4,10 +4,8 @@
 #include "notices.h"
 #include "overlay.h"
 #include "pets.h"
+#include "platform.h"
 #include "settings.h"
-#include "system_integration.h"
-
-#include <windows.h>
 
 #include <optional>
 #include <string>
@@ -15,19 +13,25 @@
 
 namespace cp {
 
-inline constexpr UINT kSessionsChangedMessage = WM_APP + 1;
-inline constexpr UINT kShowPetMessage = WM_APP + 2;
-inline constexpr UINT kTrayMessage = WM_APP + 3;
-
-class App {
+class App final : private PlatformEvents {
 public:
-    int Run(HINSTANCE instance, bool startHidden);
+    App();
+    int Run(bool startHidden);
 
 private:
     bool Initialize(bool startHidden);
     void Shutdown();
-    bool HandleMessage(UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result);
-    void HandleTimer(UINT_PTR id);
+
+    void OnSessionsChanged() override;
+    void OnHookEvent(std::string payload) override;
+    void OnShowRequested() override;
+    void OnHotkey() override;
+    void OnThemeChanged() override;
+    void OnTimer(uint32_t id) override;
+    void OnTrayClicked() override;
+    void OnTrayMenu() override;
+    void OnSessionEnding() override;
+    void OnCloseRequested() override;
 
     void InitializeSettings();
     void ApplyLanguage();
@@ -47,27 +51,24 @@ private:
     void TogglePet();
     void Quit();
     void ToggleHooks();
+    void ToggleAutostart();
     void SyncHookPath();
 
-    void ShowContextMenu(POINT screen);
-    void ShowNoticeMenu(const Notice& notice, POINT screen);
+    void ShowContextMenu(PointI screen);
+    void ShowNoticeMenu(const Notice& notice, PointI screen);
     void ShowTrayMenu();
-    UINT TrackMenu(HMENU menu, POINT screen);
-    void ExecuteCommand(UINT command);
+    void ExecuteCommand(uint32_t command);
 
-    HINSTANCE instance_ = nullptr;
     std::wstring executable_;
     Settings settings_;
     std::vector<PetInfo> pets_;
     PetSource petSource_ = PetSource::Claude;
     std::wstring activePetKey_;
+    Platform platform_;
     Overlay overlay_;
     SessionMonitor monitor_;
-    TrayIcon tray_;
-    HICON icon_ = nullptr;
     std::optional<Greeting> greeting_;
     std::vector<SessionView> sessions_;
-    UINT taskbarCreatedMessage_ = 0;
     bool hotkeyRegistered_ = false;
     bool quitting_ = false;
 };

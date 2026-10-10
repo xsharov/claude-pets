@@ -66,20 +66,6 @@ std::string Age(int64_t now, int64_t timestamp) {
 
 }
 
-void WriteConsoleText(const std::string& text) {
-    HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE);
-    if (output == nullptr || output == INVALID_HANDLE_VALUE) {
-        if (AttachConsole(ATTACH_PARENT_PROCESS)) {
-            output = GetStdHandle(STD_OUTPUT_HANDLE);
-        }
-    }
-    if (output == nullptr || output == INVALID_HANDLE_VALUE) {
-        return;
-    }
-    DWORD written = 0;
-    WriteFile(output, text.data(), static_cast<DWORD>(text.size()), &written, nullptr);
-}
-
 int RunDiagnostics() {
     const int64_t now = UnixNowMs();
     std::string out;

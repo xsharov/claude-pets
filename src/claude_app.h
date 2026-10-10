@@ -1,16 +1,14 @@
 #pragma once
 
-#include <windows.h>
-
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace cp {
 
-bool IsClaudeDesktopPath(const std::wstring& imagePath);
+std::vector<std::wstring> ClaudeDesktopDataDirectories();
 int64_t ClaudeDesktopStartedMs();
 bool IsClaudeDesktopRunning();
-HWND FindClaudeMainWindow();
 bool IsClaudeForeground();
 bool OpenClaudeSession(const std::string& sessionId);
 bool ActivateClaude();

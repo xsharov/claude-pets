@@ -3,13 +3,14 @@
 #include "hooks.h"
 #include "util.h"
 #include "version.h"
+#include "win/win_util.h"
 
 #include <objbase.h>
 #include <windows.h>
 
 #include <cwchar>
 
-int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
+int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     const wchar_t* commandLine = GetCommandLineW();
     if (std::wcsstr(commandLine, cp::kHookArgument) != nullptr) {
         return cp::RunHookRelay();
@@ -35,7 +36,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     const bool startHidden = std::wcsstr(commandLine, L"--hidden") != nullptr;
     HANDLE instanceMutex = CreateMutexW(nullptr, TRUE, L"Local\\ClaudePets.Instance");
     if (instanceMutex != nullptr && GetLastError() == ERROR_ALREADY_EXISTS) {
-        const HWND existing = FindWindowW(L"ClaudePetsOverlay", nullptr);
+        const HWND existing = FindWindowW(cp::kOverlayWindowClass, nullptr);
         if (existing != nullptr) {
             PostMessageW(existing, cp::kShowPetMessage, 0, 0);
         }
@@ -47,7 +48,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     int exitCode = 0;
     {
         cp::App app;
-        exitCode = app.Run(instance, startHidden);
+        exitCode = app.Run(startHidden);
     }
     if (SUCCEEDED(com)) {
         CoUninitialize();

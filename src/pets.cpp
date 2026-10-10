@@ -11,10 +11,9 @@ namespace cp {
 namespace {
 
 std::wstring CodexHome() {
-    wchar_t buffer[MAX_PATH] = {};
-    const DWORD length = GetEnvironmentVariableW(L"CODEX_HOME", buffer, MAX_PATH);
-    if (length > 0 && length < MAX_PATH) {
-        return std::wstring(buffer, length);
+    const std::wstring custom = GetEnv(L"CODEX_HOME");
+    if (!custom.empty()) {
+        return custom;
     }
     return JoinPath(HomeDirectory(), L".codex");
 }

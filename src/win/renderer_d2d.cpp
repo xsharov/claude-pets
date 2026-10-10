@@ -31,8 +31,12 @@ D2D1_RECT_F Inflate(const D2D1_RECT_F& rect, float dx, float dy) {
     return D2D1::RectF(rect.left - dx, rect.top - dy, rect.right + dx, rect.bottom + dy);
 }
 
-D2D1_RECT_F ComputeContentBounds(IWICBitmap* bitmap, UINT width, UINT height, int rows, float cellWidth, float cellHeight) {
-    const D2D1_RECT_F full = D2D1::RectF(0.0f, 0.0f, 1.0f, 1.0f);
+D2D1_RECT_F ToD2D(const RectF& rect) {
+    return D2D1::RectF(rect.left, rect.top, rect.right, rect.bottom);
+}
+
+RectF ComputeContentBounds(IWICBitmap* bitmap, UINT width, UINT height, int rows, float cellWidth, float cellHeight) {
+    const RectF full = {0.0f, 0.0f, 1.0f, 1.0f};
     const WICRect area = {0, 0, static_cast<INT>(width), static_cast<INT>(height)};
     ComPtr<IWICBitmapLock> lock;
     UINT stride = 0;
@@ -68,7 +72,7 @@ D2D1_RECT_F ComputeContentBounds(IWICBitmap* bitmap, UINT width, UINT height, in
     if (maxX < minX || maxY < minY) {
         return full;
     }
-    return D2D1::RectF(static_cast<float>(minX) / cellW, static_cast<float>(minY) / cellH, static_cast<float>(maxX + 1) / cellW, static_cast<float>(maxY + 1) / cellH);
+    return RectF{static_cast<float>(minX) / cellW, static_cast<float>(minY) / cellH, static_cast<float>(maxX + 1) / cellW, static_cast<float>(maxY + 1) / cellH};
 }
 
 std::wstring PickFontFamily(IDWriteFactory* factory) {
@@ -230,8 +234,12 @@ void Renderer::UnloadSpritesheet() {
     sheetSource_.Reset();
     sheetBitmap_.Reset();
     sheetPath_.clear();
-    contentBounds_ = D2D1::RectF(0.0f, 0.0f, 1.0f, 1.0f);
+    contentBounds_ = RectF{0.0f, 0.0f, 1.0f, 1.0f};
     spriteRows_ = kSpriteRowsV1;
+}
+
+bool Renderer::HasSprite() const {
+    return sheetSource_ != nullptr || sheetBitmap_ != nullptr;
 }
 
 bool Renderer::UploadSprite() {
@@ -255,7 +263,7 @@ bool Renderer::UploadSprite() {
     return true;
 }
 
-bool Renderer::BeginFrame(int widthPx, int heightPx, float scale, const RECT* partial) {
+bool Renderer::BeginFrame(int widthPx, int heightPx, float scale, const RectI* partial) {
     if (target_ == nullptr && !CreateTarget()) {
         return false;
     }
@@ -269,7 +277,7 @@ bool Renderer::BeginFrame(int widthPx, int heightPx, float scale, const RECT* pa
         return false;
     }
     partial_ = partial != nullptr;
-    partialRect_ = partial_ ? *partial : RECT{0, 0, widthPx, heightPx};
+    partialRect_ = partial_ ? RECT{partial->left, partial->top, partial->right, partial->bottom} : RECT{0, 0, widthPx, heightPx};
     if (FAILED(target_->BindDC(memoryDc_, &partialRect_))) {
         return false;
     }
@@ -436,7 +444,7 @@ void Renderer::DrawChevron(const D2D1_RECT_F& box, bool down, const D2D1_COLOR_F
     target_->DrawGeometry(path.Get(), Brush(color, opacity), 1.6f, style.Get());
 }
 
-void Renderer::DrawPet(const D2D1_RECT_F& rect, const SpriteFrame& frame, float opacity) {
+void Renderer::DrawPet(const RectF& rect, const SpriteFrame& frame, float opacity) {
     if (!UploadSprite()) {
         DrawPetPlaceholder(rect);
         return;
@@ -457,7 +465,7 @@ void Renderer::DrawPet(const D2D1_RECT_F& rect, const SpriteFrame& frame, float 
     }
 }
 
-void Renderer::DrawPetPlaceholder(const D2D1_RECT_F& rect) {
+void Renderer::DrawPetPlaceholder(const RectF& rect) {
     const float width = rect.right - rect.left;
     const float height = rect.bottom - rect.top;
     const D2D1_RECT_F body = D2D1::RectF(rect.left + width * 0.18f, rect.top + height * 0.38f, rect.right - width * 0.18f, rect.bottom - height * 0.12f);
@@ -469,12 +477,12 @@ void Renderer::DrawPetPlaceholder(const D2D1_RECT_F& rect) {
     target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(rect.left + width * 0.62f, eyeY), eye, eye * 1.4f), Brush(Rgba(0x1F1F1F, 1.0f), 1.0f));
 }
 
-void Renderer::FillHitArea(const D2D1_RECT_F& rect) {
-    target_->FillRectangle(rect, Brush(D2D1::ColorF(0, 0, 0, 1.0f / 255.0f), 1.0f));
+void Renderer::FillHitArea(const RectF& rect) {
+    target_->FillRectangle(ToD2D(rect), Brush(D2D1::ColorF(0, 0, 0, 1.0f / 255.0f), 1.0f));
 }
 
-D2D1_RECT_F Renderer::DismissRect(const D2D1_RECT_F& pill) {
-    return D2D1::RectF(pill.left - 4.0f, pill.top - 4.0f, pill.left + 16.0f, pill.top + 16.0f);
+RectF Renderer::DismissRect(const RectF& pill) {
+    return RectF{pill.left - 4.0f, pill.top - 4.0f, pill.left + 16.0f, pill.top + 16.0f};
 }
 
 void Renderer::DrawPill(const PillVisual& pill) {
@@ -484,13 +492,13 @@ void Renderer::DrawPill(const PillVisual& pill) {
     const Palette palette = CurrentPalette();
     const float height = pill.rect.bottom - pill.rect.top;
     const float radius = std::min(28.0f, height * 0.5f);
-    const D2D1_ROUNDED_RECT shape = D2D1::RoundedRect(pill.rect, radius, radius);
+    const D2D1_ROUNDED_RECT shape = D2D1::RoundedRect(ToD2D(pill.rect), radius, radius);
     FillMaterial(shape, palette, pill.opacity, pill.hovered);
     if (pill.contentVisible) {
         DrawPillContent(pill, palette);
     }
     if (pill.showDismiss) {
-        const D2D1_RECT_F box = DismissRect(pill.rect);
+        const D2D1_RECT_F box = ToD2D(DismissRect(pill.rect));
         const float size = box.right - box.left;
         FillMaterial(D2D1::RoundedRect(box, size * 0.5f, size * 0.5f), palette, pill.opacity, pill.dismissHovered);
         const D2D1_RECT_F cross = Inflate(box, -size * 0.32f, -size * 0.32f);
@@ -553,7 +561,7 @@ void Renderer::DrawPillContent(const PillVisual& pill, const Palette& palette) {
 void Renderer::DrawBadge(const BadgeVisual& badge) {
     const Palette palette = CurrentPalette();
     const float size = badge.rect.right - badge.rect.left;
-    const D2D1_ROUNDED_RECT shape = D2D1::RoundedRect(badge.rect, size * 0.5f, size * 0.5f);
+    const D2D1_ROUNDED_RECT shape = D2D1::RoundedRect(ToD2D(badge.rect), size * 0.5f, size * 0.5f);
     FillMaterial(shape, palette, 1.0f, badge.hovered);
     D2D1_COLOR_F tone = palette.text;
     switch (badge.tone) {
@@ -570,7 +578,7 @@ void Renderer::DrawBadge(const BadgeVisual& badge) {
         break;
     }
     if (badge.chevronDown || badge.chevronUp) {
-        DrawChevron(Inflate(badge.rect, -3.0f, -3.0f), badge.chevronDown, palette.text, 1.0f);
+        DrawChevron(Inflate(ToD2D(badge.rect), -3.0f, -3.0f), badge.chevronDown, palette.text, 1.0f);
         return;
     }
     if (IDWriteTextLayout* layout = Layout(badge.text, badgeFormat_.Get(), size, false)) {

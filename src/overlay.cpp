@@ -2,10 +2,7 @@
 
 #include "log.h"
 #include "overlay_metrics.h"
-#include "resource.h"
 #include "util.h"
-
-#include <windowsx.h>
 
 #include <algorithm>
 #include <cmath>
@@ -16,26 +13,18 @@ using namespace metrics;
 
 namespace {
 
-constexpr wchar_t kWindowClass[] = L"ClaudePetsOverlay";
-
 int64_t Ticks() {
     return static_cast<int64_t>(MonotonicMs());
 }
 
-bool ReducedMotion() {
-    BOOL animations = TRUE;
-    SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &animations, 0);
-    return animations == FALSE;
-}
-
-RECT UnionRect(const RECT& a, const RECT& b) {
+RectI UnionRect(const RectI& a, const RectI& b) {
     if (a.right <= a.left || a.bottom <= a.top) {
         return b;
     }
     if (b.right <= b.left || b.bottom <= b.top) {
         return a;
     }
-    return RECT{std::min(a.left, b.left), std::min(a.top, b.top), std::max(a.right, b.right), std::max(a.bottom, b.bottom)};
+    return RectI{std::min(a.left, b.left), std::min(a.top, b.top), std::max(a.right, b.right), std::max(a.bottom, b.bottom)};
 }
 
 }
@@ -44,159 +33,73 @@ Overlay::~Overlay() {
     Destroy();
 }
 
-bool Overlay::Create(HINSTANCE instance, OverlayCallbacks callbacks) {
-    instance_ = instance;
+bool Overlay::Create(OverlayCallbacks callbacks) {
     callbacks_ = std::move(callbacks);
     if (!renderer_.Initialize()) {
         return false;
     }
-    WNDCLASSEXW windowClass = {};
-    windowClass.cbSize = sizeof(windowClass);
-    windowClass.lpfnWndProc = &Overlay::WindowProc;
-    windowClass.hInstance = instance;
-    windowClass.lpszClassName = kWindowClass;
-    windowClass.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(IDI_APP));
-    windowClass.hIconSm = windowClass.hIcon;
-    RegisterClassExW(&windowClass);
-    window_ = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE, kWindowClass, L"Claude Pets", WS_POPUP, 0, 0, 1, 1,
-                              nullptr, nullptr, instance, this);
-    if (window_ == nullptr) {
+    if (!window_.Create(*this, renderer_)) {
         return false;
     }
-    ChangeWindowMessageFilterEx(window_, WM_COPYDATA, MSGFLT_ALLOW, nullptr);
-    frameClock_.Start(window_, kFrameMessage);
     shimmerEpochMs_ = Ticks();
     lastAnimationMs_ = MonotonicMs();
-    animator_.SetReducedMotion(ReducedMotion(), shimmerEpochMs_);
+    animator_.SetReducedMotion(ReducedMotionEnabled(), shimmerEpochMs_);
     animator_.Play(PetAnim::Idle, shimmerEpochMs_);
     return true;
 }
 
 void Overlay::Destroy() {
-    frameClock_.Stop();
-    if (window_ != nullptr) {
-        KillTimer(window_, kAnimationTimer);
-        KillTimer(window_, kCollapseTimer);
-        DestroyWindow(window_);
-        window_ = nullptr;
-    }
+    window_.Destroy();
 }
 
-LRESULT CALLBACK Overlay::WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
-    Overlay* self = nullptr;
-    if (message == WM_NCCREATE) {
-        auto* create = reinterpret_cast<CREATESTRUCTW*>(lParam);
-        self = static_cast<Overlay*>(create->lpCreateParams);
-        SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
-        self->window_ = window;
-    } else {
-        self = reinterpret_cast<Overlay*>(GetWindowLongPtrW(window, GWLP_USERDATA));
-    }
-    if (self == nullptr) {
-        return DefWindowProcW(window, message, wParam, lParam);
-    }
-    return self->HandleMessage(message, wParam, lParam);
+void Overlay::OnFrame() {
+    Advance(MonotonicMs());
 }
 
-LRESULT Overlay::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
-    if (callbacks_.messageHandler) {
-        LRESULT result = 0;
-        if (callbacks_.messageHandler(message, wParam, lParam, result)) {
-            return result;
-        }
-    }
-    switch (message) {
-    case WM_MOUSEACTIVATE:
-        return MA_NOACTIVATE;
-    case WM_MOUSEMOVE:
-        OnMouseMove(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)}, wParam);
-        return 0;
-    case WM_MOUSELEAVE:
-        OnMouseLeave();
-        return 0;
-    case WM_LBUTTONDOWN:
-        OnLeftDown(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
-        return 0;
-    case WM_LBUTTONUP:
-        OnLeftUp(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
-        return 0;
-    case WM_RBUTTONUP:
-        OnRightUp(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
-        return 0;
-    case WM_MOUSEWHEEL:
-        OnWheel(GET_WHEEL_DELTA_WPARAM(wParam));
-        return 0;
-    case WM_CAPTURECHANGED:
-        if (reinterpret_cast<HWND>(lParam) != window_) {
-            OnCaptureLost();
-        }
-        return 0;
-    case WM_SETCURSOR:
-        if (LOWORD(lParam) == HTCLIENT && OnSetCursor()) {
-            return TRUE;
-        }
-        break;
-    case kFrameMessage:
-        frameClock_.FrameHandled();
+void Overlay::OnTimer(uint32_t id) {
+    if (id == kAnimationTimer) {
         Advance(MonotonicMs());
-        return 0;
-    case WM_TIMER:
-        if (wParam == kAnimationTimer) {
-            Advance(MonotonicMs());
-            return 0;
-        }
-        if (wParam == kCollapseTimer) {
-            LogLine("collapse timer hover=" + std::to_string(static_cast<int>(hover_.part)));
-            KillTimer(window_, kCollapseTimer);
-            collapsePending_ = false;
-            if (!(hover_.part == HitPart::Pill || hover_.part == HitPart::Peek || hover_.part == HitPart::Dismiss || hover_.part == HitPart::Badge)) {
-                SetExpanded(false);
-            }
-            return 0;
-        }
-        break;
-    case WM_DPICHANGED:
-    case WM_DISPLAYCHANGE:
-        HandleDisplayChange();
-        return 0;
-    case WM_SETTINGCHANGE:
-        if (wParam == SPI_SETWORKAREA) {
-            HandleDisplayChange();
-        }
-        if (wParam == SPI_SETCLIENTAREAANIMATION) {
-            animator_.SetReducedMotion(ReducedMotion(), Ticks());
-            Render(false);
-            ScheduleTimer();
-        }
-        break;
-    case WM_ERASEBKGND:
-        return 1;
-    default:
-        break;
+        return;
     }
-    return DefWindowProcW(window_, message, wParam, lParam);
+    if (id == kCollapseTimer) {
+        LogLine("collapse timer hover=" + std::to_string(static_cast<int>(hover_.part)));
+        window_.KillTimer(kCollapseTimer);
+        collapsePending_ = false;
+        if (!(hover_.part == HitPart::Pill || hover_.part == HitPart::Peek || hover_.part == HitPart::Dismiss || hover_.part == HitPart::Badge)) {
+            SetExpanded(false);
+        }
+    }
+}
+
+void Overlay::OnDisplayChanged() {
+    HandleDisplayChange();
+}
+
+void Overlay::OnReducedMotionChanged() {
+    animator_.SetReducedMotion(ReducedMotionEnabled(), Ticks());
+    Render(false);
+    ScheduleTimer();
 }
 
 void Overlay::Show() {
-    if (window_ == nullptr) {
+    if (!window_.Created()) {
         return;
     }
     shown_ = true;
     frameValid_ = false;
     ApplyLayout(true);
-    ShowWindow(window_, SW_SHOWNOACTIVATE);
-    SetWindowPos(window_, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    window_.Show();
     ScheduleTimer();
 }
 
 void Overlay::Hide() {
-    if (window_ == nullptr) {
+    if (!window_.Created()) {
         return;
     }
     shown_ = false;
-    KillTimer(window_, kAnimationTimer);
-    frameClock_.SetActive(false);
-    ShowWindow(window_, SW_HIDE);
+    window_.KillTimer(kAnimationTimer);
+    window_.SetFrameClockActive(false);
+    window_.Hide();
 }
 
 void Overlay::PreserveOrderWhileHovered(std::vector<Notice>& notices) const {
@@ -318,8 +221,7 @@ void Overlay::UpdateLook(int64_t now) {
     if (now < nextLookPollMs_) {
         return;
     }
-    POINT cursor = {};
-    GetCursorPos(&cursor);
+    const PointI cursor = CursorPosition();
     const float scale = layout_.scale;
     const float centerX = layout_.window.left + (layout_.mascot.left + layout_.mascot.right) * 0.5f * scale;
     const float centerY = layout_.window.top + (layout_.mascot.top + layout_.mascot.bottom) * 0.5f * scale;
@@ -361,20 +263,17 @@ bool Overlay::HasVisibleLoading() const {
 }
 
 void Overlay::Render(bool full) {
-    if (window_ == nullptr) {
+    if (!window_.Created()) {
         return;
     }
     if (!layoutValid_) {
         ApplyLayout(true);
         return;
     }
-    const int64_t now = Ticks();
-    const int width = layout_.window.right - layout_.window.left;
-    const int height = layout_.window.bottom - layout_.window.top;
-    RECT partial = {};
-    const RECT* region = nullptr;
+    RectI partial = {};
+    const RectI* region = nullptr;
     if (!full && frameValid_) {
-        D2D1_RECT_F mascot = layout_.mascot;
+        RectF mascot = layout_.mascot;
         mascot.left -= 2.0f;
         mascot.top -= 2.0f;
         mascot.right += 2.0f;
@@ -385,8 +284,8 @@ void Overlay::Render(bool full) {
         }
         for (const PillState& pill : pills_) {
             if (pill.notice.loading && pill.contentVisible && pill.opacity > 0.05f) {
-                const D2D1_RECT_F rect = PillRect(pill);
-                const D2D1_RECT_F line = D2D1::RectF(rect.left + 12.0f, rect.top + 26.0f, rect.right - 12.0f, rect.top + 46.0f);
+                const RectF rect = PillRect(pill);
+                const RectF line = {rect.left + 12.0f, rect.top + 26.0f, rect.right - 12.0f, rect.top + 46.0f};
                 partial = UnionRect(partial, DipToWindowPx(line));
             }
         }
@@ -394,10 +293,16 @@ void Overlay::Render(bool full) {
             region = &partial;
         }
     }
-    if (!renderer_.BeginFrame(width, height, layout_.scale, region)) {
+    if (window_.Present(layout_.window, layout_.scale, region)) {
+        frameValid_ = true;
+        drawnFrame_ = paintedFrame_;
+    } else {
         frameValid_ = false;
-        return;
     }
+}
+
+void Overlay::Paint() {
+    const int64_t now = Ticks();
     std::vector<const PillState*> order;
     order.reserve(pills_.size());
     for (const PillState& pill : pills_) {
@@ -444,12 +349,7 @@ void Overlay::Render(bool full) {
         }
         renderer_.DrawBadge(badge);
     }
-    if (renderer_.EndFrame(window_, POINT{layout_.window.left, layout_.window.top})) {
-        frameValid_ = true;
-        drawnFrame_ = frame;
-    } else {
-        frameValid_ = false;
-    }
+    paintedFrame_ = frame;
 }
 
 }

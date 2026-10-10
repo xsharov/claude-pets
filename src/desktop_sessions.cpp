@@ -1,9 +1,8 @@
 #include "desktop_sessions.h"
 
+#include "claude_app.h"
 #include "json.h"
 #include "transcript.h"
-
-#include <shlobj.h>
 
 #include <mutex>
 #include <set>
@@ -61,16 +60,8 @@ std::vector<std::wstring> DesktopSessionRoots() {
         }
     }
     std::vector<std::wstring> roots;
-    const std::wstring direct = JoinPath(JoinPath(KnownFolderPath(FOLDERID_RoamingAppData), L"Claude"), L"claude-code-sessions");
-    if (DirectoryExists(direct)) {
-        roots.push_back(direct);
-    }
-    const std::wstring packages = JoinPath(KnownFolderPath(FOLDERID_LocalAppData), L"Packages");
-    for (const std::wstring& package : ListDirectories(packages)) {
-        if (!StartsWith(ToLower(package), L"claude_")) {
-            continue;
-        }
-        const std::wstring candidate = JoinPath(JoinPath(JoinPath(packages, package), L"LocalCache\\Roaming\\Claude"), L"claude-code-sessions");
+    for (const std::wstring& directory : ClaudeDesktopDataDirectories()) {
+        const std::wstring candidate = JoinPath(directory, L"claude-code-sessions");
         if (DirectoryExists(candidate)) {
             roots.push_back(candidate);
         }
