@@ -37,7 +37,7 @@ std::string Narrow(std::wstring_view text) {
 
 std::wstring GetEnv(const wchar_t* name) {
     const DWORD length = GetEnvironmentVariableW(name, nullptr, 0);
-    if (length <= 1) {
+    if (length <= 1 || length > MAX_PATH) {
         return {};
     }
     std::wstring value(length, L'\0');
