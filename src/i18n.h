@@ -67,7 +67,8 @@ struct Strings {
     const wchar_t* codecMissing;
     const wchar_t* spriteFailed;
     const wchar_t* appTranslocated;
-    const wchar_t* autostartFailed;
+    const wchar_t* buttonYes;
+    const wchar_t* buttonNo;
 };
 
 void SetLanguage(Language language);

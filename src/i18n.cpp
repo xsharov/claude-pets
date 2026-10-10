@@ -74,7 +74,8 @@ const Strings kEnglish = {
     L"Could not load the pet spritesheet:\n{}",
     L"Move Claude Pets to the Applications folder and open it from there.\n\n"
     L"macOS runs downloaded apps from a temporary read-only location, so hooks and the login item would point to a path that disappears.",
-    L"Could not change the login item. Check System Settings > General > Login Items.",
+    L"Yes",
+    L"No",
 };
 
 const Strings kRussian = {
@@ -137,7 +138,8 @@ const Strings kRussian = {
     L"Не удалось загрузить спрайтшит питомца:\n{}",
     L"Переместите Claude Pets в папку «Программы» и откройте его оттуда.\n\n"
     L"macOS запускает скачанные приложения из временной папки только для чтения, поэтому хуки и автозапуск указывали бы на исчезающий путь.",
-    L"Не удалось изменить автозапуск. Проверьте «Системные настройки» > «Основные» > «Объекты входа».",
+    L"Да",
+    L"Нет",
 };
 
 Language g_language = Language::English;

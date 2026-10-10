@@ -5,8 +5,10 @@
 #include "session_model.h"
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #if defined(_WIN32)
 #include <d2d1_1.h>
@@ -16,7 +18,6 @@
 #include <wrl/client.h>
 #elif defined(__APPLE__)
 #include <CoreGraphics/CoreGraphics.h>
-#include <CoreText/CoreText.h>
 #endif
 
 namespace cp {
@@ -52,7 +53,11 @@ struct BadgeVisual {
 
 class Renderer {
 public:
+#if defined(__APPLE__)
+    Renderer();
+#else
     Renderer() = default;
+#endif
     ~Renderer();
     Renderer(const Renderer&) = delete;
     Renderer& operator=(const Renderer&) = delete;
@@ -72,7 +77,8 @@ public:
 #if defined(_WIN32)
     bool EndFrame(HWND window, POINT windowOrigin);
 #elif defined(__APPLE__)
-    CGImageRef EndFrame();
+    bool EndFrame();
+    void AttachLayer(void* layer);
 #endif
 
     void DrawPet(const RectF& rect, const SpriteFrame& frame, float opacity);
@@ -129,69 +135,23 @@ private:
     RECT partialRect_ = {};
     int sheetVersion_ = 1;
     std::wstring sheetPath_;
-#elif defined(__APPLE__)
-    struct Color {
-        float r = 0.0f;
-        float g = 0.0f;
-        float b = 0.0f;
-        float a = 1.0f;
-    };
-
-    struct Palette {
-        Color material;
-        Color border;
-        Color shadow;
-        Color text;
-        Color secondary;
-        Color shimmer;
-        Color green;
-        Color orange;
-        Color red;
-        Color hoverOverlay;
-    };
-
-    enum class TextStyle : uint8_t { Title, Subtitle, Badge };
-
-    struct TextLine {
-        CTLineRef line = nullptr;
-        float width = 0.0f;
-    };
-
-    bool EnsureSurface(int widthPx, int heightPx);
-    void ReleaseSurface();
-    void ClearTextCache();
-    Palette CurrentPalette() const;
-    void SetFill(const Color& color, float opacity);
-    void SetStroke(const Color& color, float opacity);
-    void FillRoundedRect(const RectF& rect, float radius, const Color& color, float opacity);
-    void FillMaterial(const RectF& rect, float radius, const Palette& palette, float opacity, bool hovered);
-    void DrawPillContent(const PillVisual& pill, const Palette& palette);
-    void DrawIcon(PillIcon icon, const RectF& box, const Palette& palette, float opacity);
-    void DrawChevron(const RectF& box, bool down, const Color& color, float opacity);
-    void StrokeLine(PointF from, PointF to, const Color& color, float opacity, float width);
-    TextLine Line(const std::wstring& text, TextStyle style, float width);
-    void DrawLine(const TextLine& line, float x, float baseline, const Color& color, float opacity);
-
-    CGColorSpaceRef colorSpace_ = nullptr;
-    CGContextRef surface_ = nullptr;
-    CGContextRef context_ = nullptr;
-    CGImageRef sheet_ = nullptr;
-    CTFontRef titleFont_ = nullptr;
-    CTFontRef subtitleFont_ = nullptr;
-    CTFontRef badgeFont_ = nullptr;
-    std::unordered_map<std::wstring, TextLine> lines_;
-    float sheetWidth_ = 0.0f;
-    float sheetHeight_ = 0.0f;
-#endif
-
     int surfaceWidth_ = 0;
     int surfaceHeight_ = 0;
+    bool partial_ = false;
+#elif defined(__APPLE__)
+    struct Scene;
+
+    std::unique_ptr<Scene> scene_;
+    CGColorSpaceRef colorSpace_ = nullptr;
+    CGImageRef sheet_ = nullptr;
+    std::vector<CGImageRef> cells_;
+#endif
+
     int frameWidth_ = 0;
     int frameHeight_ = 0;
     float scale_ = 1.0f;
     bool dark_ = false;
     bool drawing_ = false;
-    bool partial_ = false;
     int spriteRows_ = kSpriteRowsV1;
     float cellWidth_ = 192.0f;
     float cellHeight_ = 208.0f;

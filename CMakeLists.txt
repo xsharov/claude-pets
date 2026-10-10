@@ -117,7 +117,7 @@ elseif(APPLE)
         src/mac/main_mac.mm
         src/mac/overlay_window_mac.mm
         src/mac/platform_mac.mm
-        src/mac/renderer_cg.mm
+        src/mac/renderer_mac.mm
         src/mac/util_mac.mm
         res/app.icns
     )
