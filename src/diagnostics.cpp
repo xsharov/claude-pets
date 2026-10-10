@@ -124,7 +124,8 @@ int RunDiagnostics() {
         }
         out += "\n    activity: " + Narrow(DescribeActivity(snapshot.activity)) + "\n";
         for (const BackgroundAgent& agent : snapshot.backgroundAgents) {
-            out += "    background agent " + agent.id + " [" + agent.type + "]: " + agent.description + ", started " + Age(now, agent.startedMs) + " ago\n";
+            out += std::string(agent.workflowRunId.empty() ? "    background agent " : "    background workflow ") + agent.id + " [" + agent.type + "]: " + agent.description + ", started " +
+                   Age(now, agent.startedMs) + " ago\n";
         }
         if (!snapshot.finalText.empty()) {
             out += "    final: " + snapshot.finalText + "\n";

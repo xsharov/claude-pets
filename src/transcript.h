@@ -45,6 +45,7 @@ struct BackgroundAgent {
     std::string toolUseId;
     std::string type;
     std::string description;
+    std::string workflowRunId;
     int64_t startedMs = 0;
     bool operator==(const BackgroundAgent&) const = default;
 };

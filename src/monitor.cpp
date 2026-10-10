@@ -309,11 +309,15 @@ void SessionMonitor::RefreshBackgroundAgents(Tracked& tracked, int64_t now) {
     const std::wstring sessionDirectory = SessionDirectory(tracked.transcriptPath);
     for (const BackgroundAgent& pendingAgent : pending) {
         BackgroundAgent agent = pendingAgent;
-        const std::wstring stem = sessionDirectory.empty() ? std::wstring() : JoinPath(sessionDirectory, L"subagents\\agent-" + Widen(agent.id));
+        const bool workflow = !agent.workflowRunId.empty();
+        const std::wstring stem = sessionDirectory.empty() || workflow ? std::wstring() : JoinPath(sessionDirectory, L"subagents\\agent-" + Widen(agent.id));
         int64_t lastSignal = agent.startedMs;
         FileStamp stamp;
         if (!stem.empty() && StatFile(stem + L".jsonl", stamp)) {
             lastSignal = std::max(lastSignal, stamp.modifiedMs);
+        }
+        if (workflow && !sessionDirectory.empty()) {
+            lastSignal = std::max(lastSignal, NewestModifiedUnder(JoinPath(sessionDirectory, L"subagents\\workflows\\" + Widen(agent.workflowRunId)), 0));
         }
         if (lastSignal < claudeStartedMs_ || now - lastSignal > kRunningStaleMs) {
             continue;

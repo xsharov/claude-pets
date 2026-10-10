@@ -187,13 +187,18 @@ void CollectBackgroundAgents(const std::vector<std::string_view>& lines, std::ve
         }
         const Json& result = entry["toolUseResult"];
         const bool launched = result["status"].str() == "async_launched";
-        const std::string& id = launched ? result["agentId"].str() : result["resumedAgentId"].str();
+        const bool workflow = launched && result["taskType"].str() == "local_workflow";
+        const std::string& id = workflow ? result["taskId"].str() : launched ? result["agentId"].str() : result["resumedAgentId"].str();
         if (type == "user" && !id.empty()) {
             BackgroundAgent& record = records[id];
             record.id = id;
             record.toolUseId = ToolUseIdOf(entry);
             record.startedMs = ParseIsoTimestampMs(entry["timestamp"].str());
-            if (launched) {
+            if (workflow) {
+                record.workflowRunId = result["runId"].str();
+                record.type = result["workflowName"].str();
+                record.description = TruncateUtf8(result["summary"].str(), 80);
+            } else if (launched) {
                 record.description = TruncateUtf8(result["description"].str(), 80);
                 const auto call = agentTypes.find(record.toolUseId);
                 record.type = call != agentTypes.end() ? call->second : std::string();
