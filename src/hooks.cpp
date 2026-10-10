@@ -22,7 +22,20 @@ bool IsToolEvent(std::string_view event) {
     return event == "PreToolUse" || event == "PostToolUse" || event == "PostToolUseFailure" || event == "PermissionRequest" || event == "PermissionDenied";
 }
 
+bool IsOtherPlatformCommand(std::string_view command) {
+#if defined(_WIN32)
+    return StartsWith(command, "/");
+#else
+    const bool drive = command.size() >= 3 && ((command[0] >= 'A' && command[0] <= 'Z') || (command[0] >= 'a' && command[0] <= 'z')) && command[1] == ':' &&
+                       (command[2] == '\\' || command[2] == '/');
+    return drive || StartsWith(command, "\\\\");
+#endif
+}
+
 bool IsOurHook(const Json& hook) {
+    if (IsOtherPlatformCommand(hook["command"].str())) {
+        return false;
+    }
     for (const Json& argument : hook["args"].items()) {
         if (argument.str() == kArgument) {
             return true;
