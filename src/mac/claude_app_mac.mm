@@ -22,11 +22,36 @@ NSString* const kClaudeBundleId = @"com.anthropic.claudefordesktop";
 constexpr char kClaudeExecutable[] = "Claude";
 constexpr char kExecutableSuffix[] = ".app/Contents/MacOS/Claude";
 
-std::atomic<int> g_claudeForeground{-1};
+std::atomic<pid_t> g_claudeActivePid{-1};
 id g_activationObserver = nil;
 
 bool IsClaudeBundle(NSRunningApplication* application) {
     return application != nil && [application.bundleIdentifier isEqualToString:kClaudeBundleId];
+}
+
+pid_t ClaudePidIfActive(NSRunningApplication* application) {
+    return IsClaudeBundle(application) ? application.processIdentifier : 0;
+}
+
+bool HasOnScreenWindow(pid_t pid) {
+    CFArrayRef windows = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID);
+    if (windows == nullptr) {
+        return false;
+    }
+    bool found = false;
+    for (CFIndex i = 0; i < CFArrayGetCount(windows) && !found; ++i) {
+        CFDictionaryRef window = static_cast<CFDictionaryRef>(CFArrayGetValueAtIndex(windows, i));
+        int owner = 0;
+        int layer = -1;
+        CFNumberRef ownerNumber = static_cast<CFNumberRef>(CFDictionaryGetValue(window, kCGWindowOwnerPID));
+        CFNumberRef layerNumber = static_cast<CFNumberRef>(CFDictionaryGetValue(window, kCGWindowLayer));
+        if (ownerNumber != nullptr && layerNumber != nullptr && CFNumberGetValue(ownerNumber, kCFNumberIntType, &owner) &&
+            CFNumberGetValue(layerNumber, kCFNumberIntType, &layer)) {
+            found = owner == pid && layer == 0;
+        }
+    }
+    CFRelease(windows);
+    return found;
 }
 
 bool IsClaudeDesktopPath(const std::string& path) {
@@ -84,13 +109,13 @@ void StartClaudeForegroundTracking() {
     if (g_activationObserver != nil) {
         return;
     }
-    g_claudeForeground = IsClaudeBundle([NSWorkspace sharedWorkspace].frontmostApplication) ? 1 : 0;
+    g_claudeActivePid = ClaudePidIfActive([NSWorkspace sharedWorkspace].frontmostApplication);
     g_activationObserver = [[NSWorkspace sharedWorkspace].notificationCenter addObserverForName:NSWorkspaceDidActivateApplicationNotification
                                                                                         object:nil
                                                                                          queue:[NSOperationQueue mainQueue]
                                                                                     usingBlock:^(NSNotification* notification) {
                                                                                         NSRunningApplication* application = notification.userInfo[NSWorkspaceApplicationKey];
-                                                                                        g_claudeForeground = IsClaudeBundle(application) ? 1 : 0;
+                                                                                        g_claudeActivePid = ClaudePidIfActive(application);
                                                                                     }];
 }
 
@@ -133,13 +158,13 @@ bool IsClaudeDesktopRunning() {
 }
 
 bool IsClaudeForeground() {
-    const int tracked = g_claudeForeground.load();
-    if (tracked >= 0) {
-        return tracked == 1;
+    pid_t pid = g_claudeActivePid.load();
+    if (pid < 0) {
+        @autoreleasepool {
+            pid = ClaudePidIfActive([NSWorkspace sharedWorkspace].frontmostApplication);
+        }
     }
-    @autoreleasepool {
-        return IsClaudeBundle([NSWorkspace sharedWorkspace].frontmostApplication);
-    }
+    return pid > 0 && HasOnScreenWindow(pid);
 }
 
 bool OpenClaudeSession(const std::string& sessionId) {

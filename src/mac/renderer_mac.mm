@@ -314,8 +314,8 @@ TextImage Renderer::Scene::Text(const std::wstring& text, CTFontRef font, float 
             CGContextRelease(context);
         }
         CFRelease(line);
-        result.width = static_cast<float>(width);
-        result.height = static_cast<float>(boxHeight);
+        result.width = static_cast<float>(static_cast<double>(pixelWidth) / scale);
+        result.height = static_cast<float>(static_cast<double>(pixelHeight) / scale);
     }
     Remember(key, result);
     return result;

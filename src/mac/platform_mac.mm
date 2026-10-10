@@ -103,6 +103,33 @@ bool ParseHotkey(const std::wstring& text, Hotkey& hotkey) {
     return false;
 }
 
+UInt32 LayoutKeyCode(const Hotkey& hotkey) {
+    if (hotkey.key.size() != 1) {
+        return hotkey.keyCode;
+    }
+    TISInputSourceRef source = TISCopyCurrentASCIICapableKeyboardLayoutInputSource();
+    if (source == nullptr) {
+        return hotkey.keyCode;
+    }
+    UInt32 code = hotkey.keyCode;
+    CFDataRef data = static_cast<CFDataRef>(TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData));
+    if (data != nullptr) {
+        const auto* layout = reinterpret_cast<const UCKeyboardLayout*>(CFDataGetBytePtr(data));
+        for (UInt16 key = 0; key < 128; ++key) {
+            UInt32 deadKeys = 0;
+            UniChar characters[4] = {};
+            UniCharCount length = 0;
+            if (UCKeyTranslate(layout, key, kUCKeyActionDisplay, 0, LMGetKbdType(), kUCKeyTranslateNoDeadKeysBit, &deadKeys, 4, &length, characters) == noErr &&
+                length == 1 && static_cast<wchar_t>(std::towlower(characters[0])) == hotkey.key[0]) {
+                code = key;
+                break;
+            }
+        }
+    }
+    CFRelease(source);
+    return code;
+}
+
 std::wstring KeyLabel(const std::wstring& key) {
     if (key == L"space") {
         return L"Space";
@@ -212,6 +239,13 @@ NSImage* TrayImage() {
 
 @implementation CPPlatformBridge
 
+- (BOOL)applicationShouldHandleReopen:(NSApplication*)sender hasVisibleWindows:(BOOL)flag {
+    if (self.events != nullptr) {
+        self.events->OnShowRequested();
+    }
+    return NO;
+}
+
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender {
     if (self.events != nullptr) {
         self.events->OnCloseRequested();
@@ -309,6 +343,8 @@ struct Platform::State {
     CFRunLoopSourceRef portSource = nullptr;
     EventHandlerRef hotkeyHandler = nullptr;
     EventHotKeyRef hotkey = nullptr;
+    std::wstring hotkeyText;
+    id inputSourceObserver = nil;
     std::unordered_map<uint32_t, NSTimer*> timers;
     std::shared_ptr<std::atomic<bool>> alive = std::make_shared<std::atomic<bool>>(true);
     bool observingTheme = false;
@@ -325,6 +361,10 @@ Platform::~Platform() {
     state.timers.clear();
     HideTray();
     UnregisterHotkey();
+    if (state.inputSourceObserver != nil) {
+        [[NSDistributedNotificationCenter defaultCenter] removeObserver:state.inputSourceObserver];
+        state.inputSourceObserver = nil;
+    }
     if (state.hotkeyHandler != nullptr) {
         RemoveEventHandler(state.hotkeyHandler);
         state.hotkeyHandler = nullptr;
@@ -368,6 +408,15 @@ bool Platform::Attach(OverlayWindow&) {
     state.observingTheme = true;
     const EventTypeSpec spec = {kEventClassKeyboard, kEventHotKeyPressed};
     InstallApplicationEventHandler(NewEventHandlerUPP(HotkeyHandler), 1, &spec, &events_, &state.hotkeyHandler);
+    state.inputSourceObserver = [[NSDistributedNotificationCenter defaultCenter] addObserverForName:static_cast<NSString*>(kTISNotifySelectedKeyboardInputSourceChanged)
+                                                                                             object:nil
+                                                                                              queue:[NSOperationQueue mainQueue]
+                                                                                         usingBlock:^(NSNotification*) {
+                                                                                             if (!state_->hotkeyText.empty()) {
+                                                                                                 const std::wstring text = state_->hotkeyText;
+                                                                                                 RegisterHotkey(text);
+                                                                                             }
+                                                                                         }];
     StartClaudeForegroundTracking();
     return true;
 }
@@ -429,10 +478,16 @@ bool Platform::RegisterHotkey(const std::wstring& text) {
     }
     UnregisterHotkey();
     const EventHotKeyID identifier = {kHotkeySignature, kHotkeyIdentifier};
-    return RegisterEventHotKey(hotkey.keyCode, hotkey.modifiers, identifier, GetApplicationEventTarget(), 0, &state_->hotkey) == noErr;
+    if (RegisterEventHotKey(LayoutKeyCode(hotkey), hotkey.modifiers, identifier, GetApplicationEventTarget(), 0, &state_->hotkey) != noErr) {
+        state_->hotkey = nullptr;
+        return false;
+    }
+    state_->hotkeyText = text;
+    return true;
 }
 
 void Platform::UnregisterHotkey() {
+    state_->hotkeyText.clear();
     if (state_->hotkey != nullptr) {
         UnregisterEventHotKey(state_->hotkey);
         state_->hotkey = nullptr;

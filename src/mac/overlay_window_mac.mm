@@ -8,6 +8,8 @@
 #import <AppKit/AppKit.h>
 #import <QuartzCore/QuartzCore.h>
 
+#include <dlfcn.h>
+
 #include <cmath>
 #include <unordered_map>
 
@@ -64,6 +66,17 @@ NSScreen* ScreenNearest(PointI point) {
 
 NSScreen* ScreenForBounds(const RectI& bounds) {
     return ScreenNearest(PointI{bounds.left + bounds.Width() / 2, bounds.top + bounds.Height() / 2});
+}
+
+void AllowCursorChangesInBackground() {
+    using DefaultConnection = int (*)();
+    using SetConnectionProperty = int32_t (*)(int, int, CFStringRef, CFTypeRef);
+    const auto connection = reinterpret_cast<DefaultConnection>(dlsym(RTLD_DEFAULT, "_CGSDefaultConnection"));
+    const auto setProperty = reinterpret_cast<SetConnectionProperty>(dlsym(RTLD_DEFAULT, "CGSSetConnectionProperty"));
+    if (connection != nullptr && setProperty != nullptr) {
+        const int identifier = connection();
+        setProperty(identifier, identifier, CFSTR("SetsCursorInBackground"), kCFBooleanTrue);
+    }
 }
 
 NSCursor* CursorFor(CursorShape shape) {
@@ -210,6 +223,10 @@ void OverlayWindowBridge::SetIgnoring(bool value) {
 }
 
 void OverlayWindowBridge::Pointer(PointI screen) {
+    if ((pressed || secondaryClick) && !PrimaryButtonDown()) {
+        pressed = false;
+        secondaryClick = false;
+    }
     if (pressed || secondaryClick || events == nullptr || panel == nil || !panel.visible) {
         return;
     }
@@ -225,6 +242,7 @@ void OverlayWindowBridge::Pointer(PointI screen) {
     SetIgnoring(true);
     if (hovering) {
         hovering = false;
+        [[NSCursor arrowCursor] set];
         events->OnPointerLeave();
     }
 }
@@ -449,7 +467,8 @@ bool OverlayWindow::Create(OverlayWindowEvents& events, Renderer& renderer) {
     impl.ignoring = true;
 
     Impl* raw = &impl;
-    impl.globalMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskMouseMoved | NSEventMaskLeftMouseDragged | NSEventMaskRightMouseDragged
+    AllowCursorChangesInBackground();
+    impl.globalMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskMouseMoved
                                                                 handler:^(NSEvent*) {
                                                                     raw->Pointer(CursorPosition());
                                                                 }];
@@ -458,7 +477,7 @@ bool OverlayWindow::Create(OverlayWindowEvents& events, Renderer& renderer) {
                                                                                 object:nil
                                                                                  queue:[NSOperationQueue mainQueue]
                                                                             usingBlock:^(NSNotification*) {
-                                                                                if (raw->events != nullptr) {
+                                                                                if (raw->events != nullptr && [NSScreen screens].count > 0) {
                                                                                     raw->events->OnDisplayChanged();
                                                                                 }
                                                                             }]];
@@ -525,9 +544,16 @@ void OverlayWindow::Show() {
 void OverlayWindow::Hide() {
     Impl& impl = *impl_;
     [impl.panel orderOut:nil];
+    const bool wasHovering = impl.hovering;
     impl.hovering = false;
     impl.pressed = false;
     impl.secondaryClick = false;
+    if (impl.events != nullptr) {
+        impl.events->OnCaptureLost();
+        if (wasHovering) {
+            impl.events->OnPointerLeave();
+        }
+    }
     impl.SetIgnoring(true);
 }
 

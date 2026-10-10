@@ -108,23 +108,20 @@ std::wstring Widen(std::string_view text) {
             ++i;
             continue;
         }
-        if (i + length > text.size()) {
-            result.push_back(static_cast<wchar_t>(kReplacement));
-            break;
-        }
+        size_t consumed = 1;
         bool valid = true;
         for (size_t k = 1; k < length; ++k) {
-            const unsigned char next = static_cast<unsigned char>(text[i + k]);
-            if ((next & 0xC0) != 0x80) {
+            if (i + k >= text.size() || (static_cast<unsigned char>(text[i + k]) & 0xC0) != 0x80) {
                 valid = false;
                 break;
             }
-            code = (code << 6) | (next & 0x3F);
+            code = (code << 6) | (static_cast<unsigned char>(text[i + k]) & 0x3F);
+            consumed = k + 1;
         }
         const bool overlong = (length == 2 && code < 0x80) || (length == 3 && code < 0x800) || (length == 4 && code < 0x10000);
         if (!valid || overlong || code > 0x10FFFF || (code >= 0xD800 && code <= 0xDFFF)) {
             result.push_back(static_cast<wchar_t>(kReplacement));
-            ++i;
+            i += consumed;
             continue;
         }
         result.push_back(static_cast<wchar_t>(code));
@@ -300,6 +297,9 @@ bool WriteFileAtomically(const std::wstring& path, std::string_view data) {
     mode_t mode = 0644;
     struct stat existing = {};
     if (stat(native.c_str(), &existing) == 0) {
+        if (access(native.c_str(), W_OK) != 0) {
+            return false;
+        }
         mode = existing.st_mode & 07777;
     }
     const int file = open(temporary.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, mode);
