@@ -180,8 +180,13 @@ HWND FindClaudeMainWindow() {
 
 std::vector<std::wstring> ClaudeDesktopDataDirectories() {
     std::vector<std::wstring> directories;
+    const std::wstring localAppData = KnownFolderPath(FOLDERID_LocalAppData);
+    const std::wstring userData = JoinPath(localAppData, L"Claude-Data");
+    for (const std::wstring& install : ListDirectories(userData)) {
+        directories.push_back(JoinPath(userData, install));
+    }
     directories.push_back(JoinPath(KnownFolderPath(FOLDERID_RoamingAppData), L"Claude"));
-    const std::wstring packages = JoinPath(KnownFolderPath(FOLDERID_LocalAppData), L"Packages");
+    const std::wstring packages = JoinPath(localAppData, L"Packages");
     for (const std::wstring& package : ListDirectories(packages)) {
         if (StartsWith(ToLower(package), L"claude_")) {
             directories.push_back(JoinPath(JoinPath(packages, package), L"LocalCache\\Roaming\\Claude"));
